@@ -41,6 +41,7 @@ uv run atl-scanner screen --config config.yaml     # метрики + фильт
 uv run atl-scanner screen --top 30                 # показать больше монет, прошедших фильтры
 uv run atl-scanner dq --config config.yaml         # проверка качества данных
 uv run atl-scanner coin atom                       # карточка одной монеты: id, тикер, пара или имя
+uv run atl-scanner ui                              # веб-страница (Streamlit, только localhost:8501)
 ```
 
 ## Структура
@@ -67,6 +68,7 @@ src/atl_scanner/
   screen.py              # применение порогов конфига → screen_results
   report.py              # CSV/Markdown + атрибуция CoinGecko
   quality.py             # проверки качества данных
+  app.py                 # Streamlit UI (extra `ui`); только вызывает pipeline, без своей логики
 tests/                   # pytest; fixtures/ — записанные сырые ответы API
 data/                    # (gitignored) raw/, scanner.duckdb, reports/
 .claude/skills/          # run-scan, add-data-source, check-data-quality

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
+import subprocess
 import sys
 from contextlib import ExitStack
 from enum import StrEnum
@@ -203,6 +205,25 @@ def _print_screen_summary(
     for path in reports:
         typer.echo(f"report: {path}")
     typer.echo(ATTRIBUTION)
+
+
+@app.command()
+def ui(
+    config: Path = ConfigOpt,
+    port: int = typer.Option(8501, "--port", help="Local port for the web page."),
+) -> None:
+    """Open the local web UI (Streamlit) in the browser."""
+    if importlib.util.find_spec("streamlit") is None:
+        typer.echo("Streamlit is not installed: run `uv sync --extra ui`", err=True)
+        raise typer.Exit(code=1)
+    app_path = Path(__file__).with_name("app.py")
+    command = [
+        sys.executable, "-m", "streamlit", "run", str(app_path),
+        "--server.address", "localhost",  # local tool: not reachable from the network
+        "--server.port", str(port), "--browser.gatherUsageStats", "false",
+        "--", "--config", str(config.resolve()),
+    ]  # fmt: skip
+    raise typer.Exit(code=subprocess.call(command))
 
 
 @app.command()
