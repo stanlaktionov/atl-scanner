@@ -13,7 +13,7 @@
              │  coingecko.py: /coins/markets, категории исключений                                │
              │  binance.py:   /api/v3/exchangeInfo, /api/v3/klines                                │
              └───────────────┬────────────────────────────────────────────────────────────────────┘
-                             │ сырые ответы (JSON) → data/raw/<source>/<endpoint>/<date>/<hash>.json
+                             │ сырые ответы → data/raw/<source>/<endpoint>/<date>/<key>_<time>.json.gz
                              ▼
   fetch ──► normalize/ ──► store/ (DuckDB) ──► metrics/ ──► screen.py ──► report.py
             pandas DF      coins,              ATR, dist_*   фильтры из     CSV + Markdown
