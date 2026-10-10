@@ -165,22 +165,21 @@ def test_call_budget_is_enforced(tmp_path: Path) -> None:
 
 
 def test_fetch_coingecko_pipeline(tmp_path: Path) -> None:
-    categories = {
-        "stablecoins": [coin("usdt", 100)],
-        "wrapped-tokens": [coin("wbtc", 90)],
-        "bridged-tokens": [],
-    }
-    server = FakeCoinGecko(UNIVERSE, categories)
     config = make_config()
+    categories: dict[str, list[dict[str, Any]]] = {
+        c: [] for c in config.exclusions.coingecko_categories
+    }
+    categories["stablecoins"] = [coin("usdt", 100)]
+    categories["wrapped-tokens"] = [coin("wbtc", 90)]
+    server = FakeCoinGecko(UNIVERSE, categories)
     universe = config.universe.model_copy(update={"min_market_cap_usd": 55})
     config = config.model_copy(update={"universe": universe})
     result = fetch_coingecko(config, make_client(server, config, tmp_path))
     assert len(result.markets) == 6
     assert result.count_at_least(55) == 5
-    assert result.category_ids == {
-        "stablecoins": {"usdt"},
-        "wrapped-tokens": {"wbtc"},
-        "bridged-tokens": set(),
-    }
-    assert result.network_calls == 1 + 2 + 3  # category list + 2 market pages + 3 categories
+    assert result.category_ids["stablecoins"] == {"usdt"}
+    assert result.category_ids["wrapped-tokens"] == {"wbtc"}
+    assert result.category_ids["bridged-tokens"] == set()
+    # category list + 2 market pages + one page per category
+    assert result.network_calls == 1 + 2 + len(categories)
     assert result.cache_hits == 0

@@ -59,13 +59,19 @@ def atl_divergence_log(binance_atl: float, coingecko_atl: float) -> float:
     return dist_log(binance_atl, coingecko_atl)
 
 
-def candle_atl(candles: pd.DataFrame, multiplier: int = 1) -> PricePoint:
-    """Lowest low in the candles (first occurrence), per token."""
-    lows = candles["low"].to_numpy(dtype="float64")
-    if lows.size == 0 or np.isnan(lows).all():
+def candle_atl(
+    candles: pd.DataFrame, multiplier: int = 1, price_column: str = "close"
+) -> PricePoint:
+    """Lowest `price_column` value in the candles (first occurrence), per token.
+
+    "close" ignores single-candle wicks (e.g. the 2025-10-10 crash printed lows near zero
+    on many pairs); "low" is the true traded minimum.
+    """
+    values = candles[price_column].to_numpy(dtype="float64")
+    if values.size == 0 or np.isnan(values).all():
         return NO_POINT
-    i = int(np.nanargmin(lows))
-    return PricePoint(float(lows[i]) / multiplier, _to_datetime(candles["open_time"].iloc[i]))
+    i = int(np.nanargmin(values))
+    return PricePoint(float(values[i]) / multiplier, _to_datetime(candles["open_time"].iloc[i]))
 
 
 def last_close(candles: pd.DataFrame, multiplier: int = 1) -> PricePoint:

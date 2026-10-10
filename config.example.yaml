@@ -14,6 +14,17 @@ exclusions:
     - stablecoins
     - wrapped-tokens
     - bridged-tokens
+    # tokenized real-world assets: near-constant prices sit "at ATL" forever
+    - tokenized-treasuries
+    - tokenized-t-bills
+    - tokenized-treasury-bonds-t-bonds
+    - tokenized-money-market-fund-mmfs
+    - tokenized-private-credit
+    - tokenized-credit
+    - tokenized-stock
+    - tokenized-gold
+    - tokenized-silver
+    - tokenized-commodities
     # - liquid-staking-tokens       # off by default: not requested, enable if needed
   ids: []                           # manual CoinGecko ids to exclude
   symbols: []                       # manual symbols to exclude (case-insensitive)
@@ -38,6 +49,8 @@ metrics:
   atr_period: 14                    # ATR(N) on 1h candles, Wilder smoothing (conventional N, not tuned)
   atr_timeframe: 1h
   new_low_window_days: 30           # "new low within last N days"
+  binance_atl_price: close          # close | low; low includes one-candle wicks
+                                    #   (2025-10-10 crash printed lows near 0 on many pairs)
 
 screen:
   near_atl:
@@ -53,7 +66,7 @@ sources:
     api_key_env: COINGECKO_API_KEY
     per_page: 250
     rate_limit_per_min: 25          # Demo plan allows ~30/min
-    max_calls_per_run: 40           # hard stop to protect the ~10k/month quota
+    max_calls_per_run: 60           # hard stop to protect the ~10k/month quota
     cache_ttl_hours:
       markets: 1
       categories: 24

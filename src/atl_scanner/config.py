@@ -91,6 +91,7 @@ class MetricsConfig(StrictModel):
     atr_period: PositiveInt
     atr_timeframe: Timeframe
     new_low_window_days: PositiveInt
+    binance_atl_price: Literal["close", "low"]
 
 
 class NearAtlConfig(StrictModel):

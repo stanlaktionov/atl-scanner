@@ -150,19 +150,28 @@ def test_atl_divergence() -> None:
 
 def test_candle_atl_first_occurrence_and_time() -> None:
     frame = hlc((5, 3, 4), (5, 2, 4), (5, 2, 4), (5, 4, 4))
-    point = candle_atl(frame)
+    point = candle_atl(frame, price_column="low")
     assert point.price == 2
     assert point.ts == datetime(2026, 10, 1, 1, tzinfo=UTC)
 
 
 def test_candle_atl_skips_nan_and_applies_multiplier() -> None:
     frame = hlc((5, NAN, 4), (5, 3000, 4))
-    assert candle_atl(frame, multiplier=1000).price == pytest.approx(3.0)
+    assert candle_atl(frame, multiplier=1000, price_column="low").price == pytest.approx(3.0)
 
 
 def test_candle_atl_empty_or_all_nan() -> None:
     assert candle_atl(hlc()) == NO_POINT
-    assert candle_atl(hlc((1, NAN, 1))) == NO_POINT
+    assert candle_atl(hlc((1, 1, NAN))) == NO_POINT
+
+
+def test_candle_atl_close_ignores_wicks() -> None:
+    # 2025-10-10 21:00 ATOMUSDT: low 0.001, close 2.944
+    frame = hlc((3.938, 3.65, 3.708), (3.768, 0.001, 2.944), (2.976, 2.656, 2.904))
+    assert candle_atl(frame, price_column="low").price == 0.001
+    close_atl = candle_atl(frame)
+    assert close_atl.price == 2.904
+    assert close_atl.ts == datetime(2026, 10, 1, 2, tzinfo=UTC)
 
 
 def test_candle_atl_rejects_naive_time() -> None:

@@ -297,7 +297,7 @@ def _coin_metrics(
 
     bn_atl, bn_row = NO_POINT, None
     if not candles.empty:
-        bn_atl = candle_atl(candles, multiplier)
+        bn_atl = candle_atl(candles, multiplier, metrics_cfg.binance_atl_price)
         bn_row = metric_row(bn_atl, last_close(candles, multiplier), atr, now, window)
         rows.append({"atl_source": AtlSource.BINANCE_1Y.value, **common, **bn_row})
 

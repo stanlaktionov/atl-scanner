@@ -83,7 +83,7 @@
 | atl_source | ATL | цена | охват |
 |---|---|---|---|
 | `coingecko_all_time` | `atl` из `/coins/markets` | `current_price` CoinGecko (USD) | вся история, все биржи |
-| `binance_1y` | `min(low)` по 1h-свечам | последний `close` Binance (USDT) | ≤ 1 год, одна пара |
+| `binance_1y` | минимум `metrics.binance_atl_price` (по умолчанию `close`) по 1h-свечам | последний `close` Binance (USDT) | ≤ 1 год, одна пара |
 
 Метрики (все пороги/окна — из конфига):
 - `dist_pct = (price − ATL) / ATL`
@@ -255,6 +255,9 @@ screen_results(
    market-data-зеркало `https://data-api.binance.vision`; базовый URL — в конфиге.
 9. **Возраст «unknown»** для монет без пары на Binance и со свежими ATL/ATH — это не «молодая монета».
 10. Метки категорий CoinGecko неполные: часть wrapped/bridged-токенов не размечена.
+
+11. **Тени свечей.** Обвал 2025-10-10 21:00 UTC оставил на многих парах Binance `low` около нуля (ATOM: low 0.001 при close 2.944). С ATL по `low` у 90 из 321 монеты годовой минимум Binance оказывался ниже исторического ATL CoinGecko; с `close` — у 3. Поэтому по умолчанию `close`.
+12. **Токенизированные реальные активы** (фонды, облигации, кредиты, акции, золото) почти не меняются в цене и всегда «на ATL». Исключаются узким списком категорий CoinGecko, но часть таких токенов не размечена (2026-10-10: VanEck Treasury Fund, Spiko, Fidelity Digital Interest Token и др.) — их ловить вручную через `exclusions.ids`.
 
 ## 6. Атрибуция
 Каждый отчёт (`.md`, CLI-вывод, Streamlit) содержит строку **«Data provided by CoinGecko»**

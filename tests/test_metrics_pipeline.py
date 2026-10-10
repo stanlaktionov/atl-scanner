@@ -20,7 +20,10 @@ NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
 
 def config(period: int = 3, window: int = 1) -> AppConfig:
     base = load_config(EXAMPLE_CONFIG)
-    metrics = base.metrics.model_copy(update={"atr_period": period, "new_low_window_days": window})
+    metrics = base.metrics.model_copy(
+        # "low" keeps the hand-calculated ATL below; "close" is covered in test_atl_metrics
+        update={"atr_period": period, "new_low_window_days": window, "binance_atl_price": "low"}
+    )
     return base.model_copy(update={"metrics": metrics})
 
 

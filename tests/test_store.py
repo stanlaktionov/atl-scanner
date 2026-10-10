@@ -115,7 +115,7 @@ def make_client(handler: httpx.MockTransport, tmp_path: Path) -> ApiClient:
         http_config=config.http,
         limiter=SlidingWindowLimiter(100, clock=clock.now, sleep=clock.sleep),
         cache=RawCache(tmp_path / "raw"),
-        max_calls=10,
+        max_calls=30,
         transport=handler,
         sleep=clock.sleep,
     )
