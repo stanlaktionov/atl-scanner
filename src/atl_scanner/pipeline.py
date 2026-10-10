@@ -283,7 +283,7 @@ def compute_metrics(config: AppConfig, store: Store, run_id: str, now: datetime)
     wide_rows: list[dict[str, object]] = []
     for record in snapshot.to_dict("records"):
         coin = {str(key): value for key, value in record.items()}
-        rows, wide = _coin_metrics(config, store, coin, now)
+        rows, wide = coin_metrics(config, store, coin, now)
         long_rows.extend({"run_id": run_id, "cg_id": coin["cg_id"], **row} for row in rows)
         wide_rows.append(wide)
     atl_metrics = pd.DataFrame(long_rows, columns=ATL_METRIC_COLUMNS)
@@ -291,9 +291,10 @@ def compute_metrics(config: AppConfig, store: Store, run_id: str, now: datetime)
     return MetricsResult(snapshot_run_id, atl_metrics, pd.DataFrame(wide_rows))
 
 
-def _coin_metrics(
+def coin_metrics(
     config: AppConfig, store: Store, coin: dict[str, Any], now: datetime
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """atl_metrics rows and the wide screening row for one snapshot coin."""
     metrics_cfg = config.metrics
     symbol = coin["binance_symbol"] if isinstance(coin["binance_symbol"], str) else None
     multiplier = _int_or(coin["binance_price_multiplier"], 1)
@@ -421,3 +422,59 @@ def write_screen_reports(
 ) -> list[Path]:
     ctx = ReportContext(screened.run_id, screened.snapshot_run_id, generated_at, config)
     return write_reports(screened.results, ctx)
+
+
+@dataclass(frozen=True)
+class CoinDetails:
+    """Everything known about one coin in the latest snapshot, computed with the config."""
+
+    snapshot: dict[str, Any]
+    metrics: dict[str, dict[str, object]]  # by atl_source
+    screen: dict[str, Any]
+    candles: int
+    first_candle: datetime | None
+    last_candle: datetime | None
+
+
+def find_coins(store: Store, query: str) -> pd.DataFrame:
+    """Latest-snapshot coins whose CoinGecko id, ticker, Binance pair or name equals `query`.
+
+    An exact CoinGecko id match wins over other matches, so ambiguous tickers can be
+    resolved by passing the id.
+    """
+    snapshot = store.latest_snapshot()
+    if snapshot.empty:
+        raise NoMarketDataError("no market snapshot stored yet; run `atl-scanner fetch`")
+    q = query.strip().lower()
+    by_id = snapshot[snapshot["cg_id"].str.lower() == q]
+    if not by_id.empty:
+        return by_id
+    matches = (
+        (snapshot["symbol"].str.lower() == q)
+        | (snapshot["binance_symbol"].fillna("").str.lower() == q)
+        | (snapshot["name"].str.lower() == q)
+    )
+    return snapshot[matches.fillna(False)]
+
+
+def coin_details(config: AppConfig, store: Store, cg_id: str, now: datetime) -> CoinDetails:
+    """Metrics and filter flags for one coin, without writing anything."""
+    snapshot = store.latest_snapshot()
+    rows = snapshot[snapshot["cg_id"] == cg_id]
+    if rows.empty:
+        raise KeyError(cg_id)
+    coin = {str(k): v for k, v in rows.iloc[0].to_dict().items()}
+    metric_rows, wide = coin_metrics(config, store, coin, now)
+    screened = apply_screen(pd.DataFrame([wide]), config).iloc[0].to_dict()
+    symbol = coin["binance_symbol"] if isinstance(coin["binance_symbol"], str) else None
+    candles = store.ohlcv(CANDLE_EXCHANGE, symbol) if symbol else pd.DataFrame()
+    first = _dt(candles["open_time"].iloc[0]) if not candles.empty else None
+    last = _dt(candles["open_time"].iloc[-1]) if not candles.empty else None
+    return CoinDetails(
+        snapshot=coin,
+        metrics={str(row["atl_source"]): row for row in metric_rows},
+        screen={str(k): v for k, v in screened.items()},
+        candles=len(candles),
+        first_candle=first,
+        last_candle=last,
+    )

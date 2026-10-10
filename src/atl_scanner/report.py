@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from atl_scanner.config import AppConfig, config_hash
+from atl_scanner.models import AgeStatus, AtlSource
 from atl_scanner.screen import SCREEN_COLUMNS
 
 ATTRIBUTION = "Data provided by CoinGecko (https://www.coingecko.com)"
@@ -171,3 +172,148 @@ def _table(header: list[str], rows: list[list[str]]) -> list[str]:
 
 def _yes(flag: bool) -> str:
     return "да" if flag else "нет"
+
+
+# --- single coin ----------------------------------------------------------------
+
+COIN_METRIC_ROWS: list[tuple[str, str]] = [
+    ("atl_price", "ATL"),
+    ("atl_ts", "дата ATL"),
+    ("price", "цена"),
+    ("price_ts", "цена на"),
+    ("dist_pct", "dist %"),
+    ("dist_log", "dist log"),
+    ("dist_atr", "dist ATR"),
+    ("is_new_low_in_window", "новый минимум за N дн."),
+    ("days_since_atl", "дней с ATL"),
+]
+
+
+def render_coin(
+    snapshot: dict[str, object],
+    metrics: dict[str, dict[str, object]],
+    screen: dict[str, object],
+    candle_info: tuple[int, datetime | None, datetime | None],
+    config: AppConfig,
+) -> list[str]:
+    """Plain-text card for one coin (CLI output)."""
+    count, first, last = candle_info
+    near = config.screen.near_atl
+    bn_title = f"Binance (1 год, {config.metrics.binance_atl_price})"
+    lines = [
+        f"{str(snapshot['symbol']).upper()} — {snapshot['name']} ({snapshot['cg_id']})",
+        f"  снимок данных:  {snapshot['snapshot_run_id']}, цена CoinGecko от "
+        f"{_when(snapshot['cg_last_updated'])}",
+        f"  market cap:     ${_num(snapshot['market_cap_usd'], 'cap')}"
+        f" (rank {_text(snapshot['market_cap_rank'])})",
+        f"  исключена:      {_excluded(snapshot)}",
+        f"  Binance:        {_pair(snapshot)}",
+        f"  свечи 1h:       {count}" + (f", {_when(first)} → {_when(last)}" if count else ""),
+        f"  возраст:        {_age(screen['age_status'])}",
+        "",
+        f"  {'':24}{'CoinGecko (вся история)':>26}{bn_title:>28}",
+    ]
+    cg = metrics.get(AtlSource.COINGECKO_ALL_TIME.value, {})
+    bn = metrics.get(AtlSource.BINANCE_1Y.value, {})
+    window = config.metrics.new_low_window_days
+    for key, title in COIN_METRIC_ROWS:
+        label = title.replace("N", str(window))
+        lines.append(f"  {label:<24}{_metric(key, cg.get(key)):>26}{_metric(key, bn.get(key)):>28}")
+    atr = cg.get("atr_value")
+    lines += [
+        "",
+        f"  ATR({config.metrics.atr_period}) {config.metrics.atr_timeframe}: "
+        f"{_metric('atl_price', atr)} (за токен)",
+        f"  расхождение ATL: {_metric('dist_log', screen.get('atl_divergence_log'))}"
+        " (ln ATL Binance − ln ATL CoinGecko)",
+        "",
+        "  фильтры текущего конфига:",
+        f"    market cap ≥ ${config.universe.min_market_cap_usd:,.0f}: "
+        f"{_flag(screen['passes_mcap'])}",
+        f"    возраст ≥ {config.universe.min_age_days} дн.: {_flag(screen['passes_age'])}"
+        + ("" if config.screen.require_age else " (не обязателен)"),
+        f"    около ATL ({near.metric} по {near.atl_source}, порог "
+        f"{'не задан' if near.max is None else near.max}): {_flag(screen['passes_near_atl'])}",
+        f"    пара Binance: {_flag(isinstance(snapshot['binance_symbol'], str))}"
+        + ("" if config.screen.require_binance_pair else " (не обязательна)"),
+        f"    → прошла все: {_flag(screen['passes_all'])}",
+        "",
+        ATTRIBUTION,
+    ]
+    return lines
+
+
+def _missing(value: object) -> bool:
+    return (
+        value is None
+        or value is pd.NA
+        or value is pd.NaT
+        or (isinstance(value, float) and math.isnan(value))
+    )
+
+
+def _text(value: object) -> str:
+    return "—" if _missing(value) else str(value)
+
+
+def _num(value: object, kind: str) -> str:
+    if _missing(value):
+        return "—"
+    number = float(value)  # type: ignore[arg-type]
+    if kind == "cap":
+        return f"{number / 1e6:,.1f}M"
+    return f"{number:.6g}"
+
+
+def _when(value: object) -> str:
+    if _missing(value):
+        return "—"
+    return f"{pd.Timestamp(value):%Y-%m-%d %H:%M} UTC"  # type: ignore[arg-type]
+
+
+def _metric(key: str, value: object) -> str:
+    if _missing(value):
+        return "—"
+    if key in ("atl_ts", "price_ts"):
+        return _when(value)
+    if key == "is_new_low_in_window":
+        return _flag(value)
+    if key == "dist_pct":
+        return f"{float(value) * 100:.2f}%"  # type: ignore[arg-type]
+    if key == "days_since_atl":
+        return f"{float(value):.1f}"  # type: ignore[arg-type]
+    if key in ("dist_log", "dist_atr"):
+        return f"{float(value):.3f}"  # type: ignore[arg-type]
+    return _num(value, "price")
+
+
+def _flag(value: object) -> str:
+    if _missing(value):
+        return "— (неизвестно / не задано)"
+    return "да" if bool(value) else "нет"
+
+
+def _excluded(snapshot: dict[str, object]) -> str:
+    reason = snapshot.get("exclusion_reason")
+    if bool(snapshot.get("excluded")):
+        return f"да ({reason})"
+    return "нет" if _missing(reason) else f"нет (оставлена через keep_ids; {reason})"
+
+
+def _pair(snapshot: dict[str, object]) -> str:
+    status = _text(snapshot.get("mapping_status"))
+    symbol = snapshot.get("binance_symbol")
+    if not isinstance(symbol, str):
+        return f"нет пары ({status})"
+    multiplier = snapshot.get("binance_price_multiplier")
+    mult = "" if _missing(multiplier) or int(multiplier) == 1 else f", ×{int(multiplier)}"  # type: ignore[call-overload]
+    dev = _metric("dist_log", snapshot.get("binance_price_dev_log"))
+    return f"{symbol} ({status}{mult}, отклонение цены от 24h-диапазона CoinGecko {dev})"
+
+
+def _age(status: object) -> str:
+    if status == AgeStatus.BINANCE_FIRST_CANDLE.value:
+        return "доказан первой свечой Binance"
+    if status == AgeStatus.COINGECKO_ATL_OR_ATH_DATE.value:
+        return "доказан датой ATL/ATH CoinGecko"
+    return "unknown — доказательств нет"

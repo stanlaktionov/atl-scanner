@@ -25,6 +25,11 @@ copy config.yaml data\config.try.yaml   # правка: screen.near_atl.max / me
 uv run atl-scanner screen -c data\config.try.yaml
 ```
 
+## Одна монета
+`uv run atl-scanner coin <id|тикер|пара|имя>` — без сети, по последнему снимку: метрики обоих ATL,
+сопоставление, свечи, возраст и прошла ли фильтры текущего конфига. Неоднозначный тикер
+(напр. `meme`) — код выхода 2 и список id; повторить с id CoinGecko.
+
 ## Где результат
 - Отчёт: `data/reports/<run_id>.csv` и `.md` — их пишут и `scan`, и `screen`; run_id отбора
   печатается в конце вывода. Первая строка CSV — атрибуция-комментарий, читать так:

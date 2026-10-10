@@ -22,6 +22,8 @@ from atl_scanner.pipeline import (
     FetchSummary,
     NoMarketDataError,
     ScreenSummary,
+    coin_details,
+    find_coins,
     run_fetch,
     run_scan,
     run_screen,
@@ -29,7 +31,7 @@ from atl_scanner.pipeline import (
     write_screen_reports,
 )
 from atl_scanner.quality import run_checks, write_markdown
-from atl_scanner.report import ATTRIBUTION
+from atl_scanner.report import ATTRIBUTION, render_coin
 from atl_scanner.screen import near_atl_column
 from atl_scanner.sources.binance import build_binance_client
 from atl_scanner.sources.coingecko import UnknownCategoryError, build_coingecko_client
@@ -201,6 +203,42 @@ def _print_screen_summary(
     for path in reports:
         typer.echo(f"report: {path}")
     typer.echo(ATTRIBUTION)
+
+
+@app.command()
+def coin(
+    query: str = typer.Argument(..., help="CoinGecko id, ticker, Binance pair or name."),
+    config: Path = ConfigOpt,
+) -> None:
+    """Show metrics, mapping, age and filter results for one coin (no network)."""
+    cfg = _load(config)
+    if not cfg.storage.db_path.exists():
+        typer.echo("no database yet; run `atl-scanner fetch` first", err=True)
+        raise typer.Exit(code=1)
+    with Store(cfg.storage.db_path, read_only=True) as store:
+        try:
+            matches = find_coins(store, query)
+        except NoMarketDataError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        if matches.empty:
+            typer.echo(
+                f"{query!r} not found in the latest snapshot (only coins down to "
+                f"${cfg.universe.min_market_cap_usd:,.0f} market cap are fetched)",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if len(matches) > 1:
+            typer.echo(f"{query!r} matches several coins; pass the CoinGecko id:", err=True)
+            for cg_id, name, cap in zip(
+                matches["cg_id"], matches["name"], matches["market_cap_usd"], strict=True
+            ):
+                typer.echo(f"  {cg_id:<32} {name}  ${float(cap) / 1e6:,.1f}M", err=True)
+            raise typer.Exit(code=2)
+        details = coin_details(cfg, store, str(matches["cg_id"].iloc[0]), utc_now())
+    candle_info = (details.candles, details.first_candle, details.last_candle)
+    for line in render_coin(details.snapshot, details.metrics, details.screen, candle_info, cfg):
+        typer.echo(line)
 
 
 @app.command()

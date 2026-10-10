@@ -296,17 +296,18 @@ class Store:
         """Latest market snapshot joined with coin flags; timestamps tz-aware UTC."""
         frame = self.query_df(
             """
-            SELECT m.run_id AS snapshot_run_id, m.cg_id, c.symbol, c.name,
-                   m.price_usd, m.market_cap_usd, m.atl, m.atl_date, m.ath_date,
-                   m.cg_last_updated, c.binance_symbol, c.binance_price_multiplier,
-                   c.mapping_status, c.excluded, c.exclusion_reason
+            SELECT m.run_id AS snapshot_run_id, m.snapshot_ts, m.cg_id, c.symbol, c.name,
+                   m.price_usd, m.market_cap_usd, m.market_cap_rank, m.atl, m.atl_date,
+                   m.ath, m.ath_date, m.cg_last_updated, c.binance_symbol,
+                   c.binance_price_multiplier, c.mapping_status, c.binance_price_dev_log,
+                   c.excluded, c.exclusion_reason
             FROM market_snapshots m
             JOIN coins c USING (cg_id)
             WHERE m.run_id = (SELECT max(run_id) FROM market_snapshots)
             ORDER BY m.market_cap_usd DESC
             """
         )
-        return _localize(frame, ["atl_date", "ath_date", "cg_last_updated"])
+        return _localize(frame, ["snapshot_ts", "atl_date", "ath_date", "cg_last_updated"])
 
     def upsert_atl_metrics(self, frame: pd.DataFrame) -> None:
         key = ["run_id", "cg_id", "atl_source"]
