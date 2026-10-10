@@ -268,6 +268,37 @@ class Store:
         ).fetchall()
         return [row[0] for row in rows]
 
+    def ohlcv(self, exchange: str, symbol: str) -> pd.DataFrame:
+        """All stored candles of one symbol, oldest first, open_time tz-aware UTC."""
+        frame = self.query_df(
+            "SELECT * FROM ohlcv_1h WHERE exchange = ? AND symbol = ? ORDER BY open_time",
+            [exchange, symbol],
+        )
+        return _localize(frame, ["open_time"])
+
+    # metrics --------------------------------------------------------------
+
+    def latest_snapshot(self) -> pd.DataFrame:
+        """Latest market snapshot joined with coin flags; timestamps tz-aware UTC."""
+        frame = self.query_df(
+            """
+            SELECT m.run_id AS snapshot_run_id, m.cg_id, c.symbol, c.name,
+                   m.price_usd, m.market_cap_usd, m.atl, m.atl_date, m.ath_date,
+                   m.cg_last_updated, c.binance_symbol, c.binance_price_multiplier,
+                   c.mapping_status, c.excluded, c.exclusion_reason
+            FROM market_snapshots m
+            JOIN coins c USING (cg_id)
+            WHERE m.run_id = (SELECT max(run_id) FROM market_snapshots)
+            ORDER BY m.market_cap_usd DESC
+            """
+        )
+        return _localize(frame, ["atl_date", "ath_date", "cg_last_updated"])
+
+    def upsert_atl_metrics(self, frame: pd.DataFrame) -> None:
+        key = ["run_id", "cg_id", "atl_source"]
+        update = [c for c in frame.columns if c not in key]
+        self._upsert("atl_metrics", frame, key=key, update=update)
+
     # reads --------------------------------------------------------------
 
     def query_df(self, sql: str, params: Sequence[Any] | None = None) -> pd.DataFrame:
@@ -308,3 +339,10 @@ def _naive_utc(moment: datetime) -> datetime:
 
 def _aware_utc(moment: datetime) -> datetime:
     return moment.replace(tzinfo=UTC)
+
+
+def _localize(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Mark naive UTC TIMESTAMP columns as tz-aware UTC."""
+    for column in columns:
+        frame[column] = pd.to_datetime(frame[column]).dt.tz_localize("UTC")
+    return frame

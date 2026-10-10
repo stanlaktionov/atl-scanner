@@ -30,3 +30,11 @@ class MappingStatus(StrEnum):
     AMBIGUOUS = "ambiguous"  # several coins match the pair; the largest by market cap holds it
     MANUAL = "manual"  # from mapping.overrides
     PRICE_MISMATCH = "price_mismatch"  # same ticker, price too far from CoinGecko's
+
+
+class AgeStatus(StrEnum):
+    """Evidence that a coin had a price at least universe.min_age_days ago."""
+
+    BINANCE_FIRST_CANDLE = "binance_first_candle"
+    COINGECKO_ATL_OR_ATH_DATE = "coingecko_atl_or_ath_date"
+    UNKNOWN = "unknown"  # no evidence either way; not the same as "young"

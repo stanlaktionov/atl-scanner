@@ -193,10 +193,11 @@ class AppConfig(StrictModel):
     @model_validator(mode="after")
     def _cross_section(self) -> Self:
         binance = self.sources.binance
-        if self.metrics.atr_timeframe not in binance.timeframes:
+        available = [*binance.timeframes, *binance.derived_timeframes]
+        if self.metrics.atr_timeframe not in available:
             raise ValueError(
-                f"metrics.atr_timeframe {self.metrics.atr_timeframe!r} "
-                f"must be in sources.binance.timeframes"
+                f"metrics.atr_timeframe {self.metrics.atr_timeframe!r} must be a fetched "
+                f"or derived timeframe of sources.binance"
             )
         if self.metrics.new_low_window_days > binance.history_days:
             raise ValueError("metrics.new_low_window_days must be <= sources.binance.history_days")

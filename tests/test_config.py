@@ -117,10 +117,10 @@ def test_1h_timeframe_is_required(
         load_config(write_config(example_config_dict))
 
 
-def test_atr_timeframe_must_be_fetched(
+def test_atr_timeframe_must_be_available(
     example_config_dict: dict[str, Any], write_config: WriteConfig
 ) -> None:
-    example_config_dict["metrics"]["atr_timeframe"] = "2h"
+    example_config_dict["metrics"]["atr_timeframe"] = "4h"
     with pytest.raises(ConfigError, match="atr_timeframe"):
         load_config(write_config(example_config_dict))
 
@@ -149,3 +149,10 @@ def test_config_hash_tracks_changes(
     assert base == config_hash(load_config(EXAMPLE_CONFIG))
     example_config_dict["universe"]["min_market_cap_usd"] = 50_000_000
     assert config_hash(load_config(write_config(example_config_dict))) != base
+
+
+def test_atr_timeframe_may_be_derived(
+    example_config_dict: dict[str, Any], write_config: WriteConfig
+) -> None:
+    example_config_dict["metrics"]["atr_timeframe"] = "2h"
+    assert load_config(write_config(example_config_dict)).metrics.atr_timeframe == "2h"

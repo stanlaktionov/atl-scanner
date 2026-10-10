@@ -14,10 +14,27 @@ from typing import Any
 
 import pandas as pd
 
-from atl_scanner.config import AppConfig, Timeframe, config_hash, config_snapshot
+from atl_scanner.config import (
+    AppConfig,
+    Timeframe,
+    config_hash,
+    config_snapshot,
+    timeframe_hours,
+)
 from atl_scanner.exclusions import classify_exclusions
 from atl_scanner.mapping import map_to_binance
-from atl_scanner.normalize.binance import normalize_klines, normalize_pairs
+from atl_scanner.metrics.atl import (
+    NO_POINT,
+    PricePoint,
+    age_status,
+    atl_divergence_log,
+    candle_atl,
+    last_close,
+    metric_row,
+)
+from atl_scanner.metrics.indicators import last_atr
+from atl_scanner.models import AtlSource
+from atl_scanner.normalize.binance import normalize_klines, normalize_pairs, resample_ohlcv
 from atl_scanner.normalize.coingecko import coins_frame, normalize_markets, snapshots_frame
 from atl_scanner.sources.binance import BinanceSource
 from atl_scanner.sources.coingecko import CoinGeckoSource
@@ -214,3 +231,124 @@ def run_fetch(
         raise
     store.finish_run(run_id, now(), "ok", cg_calls=cg_client.network_calls, binance_weight=weight())
     return FetchSummary(run_id, fetched, len(markets), exclusions, mapping, candles, weight())
+
+
+ATL_METRIC_COLUMNS = [
+    "run_id",
+    "cg_id",
+    "atl_source",
+    "atl_price",
+    "atl_ts",
+    "price",
+    "price_ts",
+    "dist_pct",
+    "dist_log",
+    "atr_period",
+    "atr_value",
+    "dist_atr",
+    "new_low_window_days",
+    "is_new_low_in_window",
+    "days_since_atl",
+]
+METRIC_FIELDS = ["dist_pct", "dist_log", "dist_atr"]
+
+
+@dataclass(frozen=True)
+class MetricsResult:
+    """atl_metrics rows (two per coin) plus one wide row per coin for screening."""
+
+    atl_metrics: pd.DataFrame
+    coins: pd.DataFrame
+
+
+def compute_metrics(config: AppConfig, store: Store, run_id: str, now: datetime) -> MetricsResult:
+    """ATL metrics for every coin of the latest snapshot, from both ATL sources.
+
+    Binance prices are converted per token with the pair multiplier, so the ATR is in the
+    same units as both ATLs (USDT ~ USD assumed for the CoinGecko row).
+    """
+    snapshot = store.latest_snapshot()
+    long_rows: list[dict[str, object]] = []
+    wide_rows: list[dict[str, object]] = []
+    for record in snapshot.to_dict("records"):
+        coin = {str(key): value for key, value in record.items()}
+        rows, wide = _coin_metrics(config, store, coin, now)
+        long_rows.extend({"run_id": run_id, "cg_id": coin["cg_id"], **row} for row in rows)
+        wide_rows.append(wide)
+    atl_metrics = pd.DataFrame(long_rows, columns=ATL_METRIC_COLUMNS)
+    return MetricsResult(atl_metrics, pd.DataFrame(wide_rows))
+
+
+def _coin_metrics(
+    config: AppConfig, store: Store, coin: dict[str, Any], now: datetime
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    metrics_cfg = config.metrics
+    symbol = coin["binance_symbol"] if isinstance(coin["binance_symbol"], str) else None
+    multiplier = _int_or(coin["binance_price_multiplier"], 1)
+    candles = store.ohlcv(CANDLE_EXCHANGE, symbol) if symbol else pd.DataFrame()
+    atr = _atr_per_token(candles, config, multiplier)
+    window = metrics_cfg.new_low_window_days
+    common = {"atr_period": metrics_cfg.atr_period, "new_low_window_days": window}
+
+    cg_atl = PricePoint(_float(coin["atl"]), _dt(coin["atl_date"]))
+    cg_price = PricePoint(_float(coin["price_usd"]), _dt(coin["cg_last_updated"]))
+    cg_row = metric_row(cg_atl, cg_price, atr, now, window)
+    rows = [{"atl_source": AtlSource.COINGECKO_ALL_TIME.value, **common, **cg_row}]
+
+    bn_atl, bn_row = NO_POINT, None
+    if not candles.empty:
+        bn_atl = candle_atl(candles, multiplier)
+        bn_row = metric_row(bn_atl, last_close(candles, multiplier), atr, now, window)
+        rows.append({"atl_source": AtlSource.BINANCE_1Y.value, **common, **bn_row})
+
+    first_candle = _dt(candles["open_time"].iloc[0]) if not candles.empty else None
+    age = age_status(
+        first_candle,
+        _dt(coin["atl_date"]),
+        _dt(coin["ath_date"]),
+        now,
+        config.universe.min_age_days,
+    )
+    wide: dict[str, object] = {
+        "cg_id": coin["cg_id"],
+        "symbol": coin["symbol"],
+        "binance_symbol": symbol,
+        "mapping_status": coin["mapping_status"],
+        "market_cap_usd": coin["market_cap_usd"],
+        "age_status": age.value,
+        "first_candle_ts": first_candle,
+        "excluded": bool(coin["excluded"]) if coin["excluded"] is not None else False,
+        "exclusion_reason": coin["exclusion_reason"],
+        **{f"cg_{f}": cg_row[f] for f in METRIC_FIELDS},
+        **{f"bn_{f}": (bn_row[f] if bn_row else float("nan")) for f in METRIC_FIELDS},
+        "bn_is_new_low_in_window": bn_row["is_new_low_in_window"] if bn_row else None,
+        "atl_divergence_log": atl_divergence_log(bn_atl.price, cg_atl.price),
+    }
+    return rows, wide
+
+
+def _atr_per_token(candles: pd.DataFrame, config: AppConfig, multiplier: int) -> float:
+    if candles.empty:
+        return float("nan")
+    hours = timeframe_hours(config.metrics.atr_timeframe)
+    frame = candles if hours == 1 else resample_ohlcv(candles, hours)
+    return last_atr(frame, config.metrics.atr_period) / multiplier
+
+
+def _dt(value: object) -> datetime | None:
+    if value is None or value is pd.NaT or (isinstance(value, float) and value != value):
+        return None
+    return pd.Timestamp(value).to_pydatetime()  # type: ignore[arg-type]
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _int_or(value: object, default: int) -> int:
+    if value is None or value is pd.NA or (isinstance(value, float) and value != value):
+        return default
+    return int(float(value))  # type: ignore[arg-type]
