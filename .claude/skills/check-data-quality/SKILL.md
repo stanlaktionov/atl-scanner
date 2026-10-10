@@ -15,7 +15,7 @@ uv run atl-scanner dq -c config.yaml
 ## Проверки
 1. **Пропуски 1h-свечей** — ожидаемое число свечей между первой и последней vs фактическое:
    ```sql
-   select symbol, min(open_time) first, max(open_time) last, count(*) n,
+   select symbol, min(open_time) first_ts, max(open_time) last_ts, count(*) n,
           datediff('hour', min(open_time), max(open_time)) + 1 - count(*) as missing
    from ohlcv_1h group by symbol having missing > 0 order by missing desc;
    ```
