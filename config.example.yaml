@@ -1,0 +1,78 @@
+# Crypto ATL Scanner — config template.
+# Copy to config.yaml (gitignored). Every threshold, window and limit lives here.
+# Default values are starting points for research, NOT tuned or "optimal" values.
+
+universe:
+  vs_currency: usd
+  min_market_cap_usd: 20000000      # > $20M
+  min_age_days: 365                 # coin must have a price/candle at least this many days ago
+  max_coins: null                   # optional cap for debugging; null = no cap
+
+exclusions:
+  # CoinGecko category ids (verify with /coins/categories/list)
+  coingecko_categories:
+    - stablecoins
+    - wrapped-tokens
+    - bridged-tokens
+    # - liquid-staking-tokens       # off by default: not requested, enable if needed
+  ids: []                           # manual CoinGecko ids to exclude
+  symbols: []                       # manual symbols to exclude (case-insensitive)
+  name_patterns:                    # regex safety net for unlabelled tokens
+    - "(?i)^wrapped\\b"
+    - "(?i)\\bbridged\\b"
+
+mapping:
+  quote_assets: [USDT]              # Binance quote assets, in priority order
+  overrides: {}                     # cg_id: BINANCE_SYMBOL, or cg_id: null to force "no pair"
+  # example:
+  #   some-coin-id: ABCUSDT
+
+metrics:
+  atr_period: 14                    # ATR(N) on 1h candles, Wilder smoothing (conventional N, not tuned)
+  atr_timeframe: 1h
+  new_low_window_days: 30           # "new low within last N days"
+
+screen:
+  near_atl:
+    metric: dist_log                # dist_pct | dist_log | dist_atr
+    atl_source: coingecko_all_time  # coingecko_all_time | binance_1y
+    max: null                       # intentionally unset: null => rank only, no filter
+  require_age: true                 # coins with age_status=unknown pass only if false
+  require_binance_pair: false       # unmapped coins are kept and flagged
+
+sources:
+  coingecko:
+    base_url: https://api.coingecko.com/api/v3
+    api_key_env: COINGECKO_API_KEY
+    per_page: 250
+    rate_limit_per_min: 25          # Demo plan allows ~30/min
+    max_calls_per_run: 40           # hard stop to protect the ~10k/month quota
+    cache_ttl_hours:
+      markets: 1
+      categories: 24
+    age_fallback_max_calls: 0       # /coins/{id}/market_chart for unknown age; 0 = off
+  binance:
+    base_url: https://data-api.binance.vision   # market-data mirror; https://api.binance.com also works
+    klines_limit: 1000
+    history_days: 365               # never more than 1 year
+    timeframes: [1h]                # fetched
+    derived_timeframes: [2h]        # resampled from 1h, not fetched
+    weight_budget_per_min: 3000     # 50% of the 6000/min IP limit
+    cache_ttl_hours:
+      exchange_info: 24
+
+http:
+  timeout_s: 30
+  max_retries: 5
+  backoff_base_s: 1.0
+  backoff_max_s: 60
+
+storage:
+  data_dir: data
+  raw_dir: data/raw
+  db_path: data/scanner.duckdb
+
+report:
+  output_dir: data/reports
+  formats: [csv, md]
+  sort_by: cg_dist_log              # any screen_results column

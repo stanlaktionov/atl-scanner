@@ -1,0 +1,26 @@
+# secrets & local config
+.env
+config.yaml
+
+# data: raw API responses, DuckDB, reports
+data/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# streamlit
+.streamlit/secrets.toml
