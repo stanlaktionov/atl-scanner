@@ -17,7 +17,14 @@ from atl_scanner.config import (
     load_config,
     load_env,
 )
-from atl_scanner.pipeline import FetchSummary, run_fetch
+from atl_scanner.pipeline import (
+    FetchSummary,
+    NoMarketDataError,
+    ScreenSummary,
+    run_fetch,
+    run_screen,
+)
+from atl_scanner.screen import near_atl_column
 from atl_scanner.sources.binance import build_binance_client
 from atl_scanner.sources.coingecko import UnknownCategoryError, build_coingecko_client
 from atl_scanner.sources.http import ApiError, CallBudgetExceeded
@@ -28,6 +35,7 @@ app = typer.Typer(help="Crypto ATL Scanner — research screener, not trading si
 ConfigOpt = typer.Option(Path("config.yaml"), "--config", "-c", help="Path to config YAML.")
 OnlyOpt = typer.Option(None, "--only", help="Skip Binance and fetch CoinGecko only.")
 NoCandlesOpt = typer.Option(False, "--no-candles", help="Refresh mapping, skip klines.")
+TopOpt = typer.Option(15, "--top", help="How many passing coins to print.")
 ATTRIBUTION = "Data provided by CoinGecko (https://www.coingecko.com)"
 
 
@@ -129,9 +137,37 @@ def _print_fetch_summary(cfg: AppConfig, summary: FetchSummary) -> None:
 
 
 @app.command()
-def screen(config: Path = ConfigOpt) -> None:
+def screen(config: Path = ConfigOpt, top: int = TopOpt) -> None:
     """Recompute metrics and filters from data already in DuckDB (no network)."""
-    raise NotImplementedError("PLAN.md steps 7-8")
+    cfg = _load(config)
+    try:
+        with Store(cfg.storage.db_path) as store:
+            summary = run_screen(cfg, store)
+    except NoMarketDataError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _print_screen_summary(cfg, summary, top)
+
+
+def _print_screen_summary(cfg: AppConfig, summary: ScreenSummary, top: int) -> None:
+    results = summary.results
+    near = cfg.screen.near_atl
+    typer.echo(f"run {summary.run_id} (data from {summary.snapshot_run_id})")
+    typer.echo(f"  coins:            {len(results)}")
+    typer.echo(f"  passes market cap: {int(results['passes_mcap'].sum())}")
+    typer.echo(f"  not excluded:      {int((~results['excluded']).sum())}")
+    typer.echo(f"  age proven:        {int(results['passes_age'].sum())}")
+    typer.echo(f"  with Binance pair: {int(results['binance_symbol'].notna().sum())}")
+    limit = "not set (rank only)" if near.max is None else f"<= {near.max}"
+    typer.echo(f"  near ATL:          {near.metric} vs {near.atl_source}, {limit}")
+    typer.echo(f"  passes all:        {int(results['passes_all'].sum())}")
+    column = near_atl_column(cfg)
+    shown = results[results["passes_all"]].sort_values(column).head(top)
+    columns = ["symbol", "binance_symbol", "market_cap_usd", column, "atl_divergence_log"]
+    if not shown.empty:
+        typer.echo(f"top {len(shown)} by {column}:")
+        typer.echo(shown[columns].to_string(index=False, float_format=lambda v: f"{v:.4g}"))
+    typer.echo(ATTRIBUTION)
 
 
 @app.command()

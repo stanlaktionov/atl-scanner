@@ -125,6 +125,7 @@ SCHEMA = [
 MIGRATIONS = [
     "ALTER TABLE coins ADD COLUMN IF NOT EXISTS binance_price_multiplier INTEGER",
     "ALTER TABLE coins ADD COLUMN IF NOT EXISTS binance_price_dev_log DOUBLE",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS snapshot_run_id VARCHAR",
 ]
 
 TABLES = (
@@ -182,11 +183,20 @@ class Store:
         *,
         cg_calls: int | None = None,
         binance_weight: int | None = None,
+        snapshot_run_id: str | None = None,
     ) -> None:
+        """Close a run; snapshot_run_id names the fetch run whose data was screened."""
         self.con.execute(
-            "UPDATE runs SET finished_at = ?, status = ?, cg_calls = ?, binance_weight = ? "
-            "WHERE run_id = ?",
-            [_naive_utc(finished_at), status, cg_calls, binance_weight, run_id],
+            "UPDATE runs SET finished_at = ?, status = ?, cg_calls = ?, binance_weight = ?, "
+            "snapshot_run_id = coalesce(?, snapshot_run_id) WHERE run_id = ?",
+            [
+                _naive_utc(finished_at),
+                status,
+                cg_calls,
+                binance_weight,
+                snapshot_run_id,
+                run_id,
+            ],
         )
 
     # coins & snapshots --------------------------------------------------
@@ -298,6 +308,11 @@ class Store:
         key = ["run_id", "cg_id", "atl_source"]
         update = [c for c in frame.columns if c not in key]
         self._upsert("atl_metrics", frame, key=key, update=update)
+
+    def upsert_screen_results(self, frame: pd.DataFrame) -> None:
+        key = ["run_id", "cg_id"]
+        update = [c for c in frame.columns if c not in key]
+        self._upsert("screen_results", frame, key=key, update=update)
 
     # reads --------------------------------------------------------------
 

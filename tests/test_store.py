@@ -103,7 +103,10 @@ def test_count_rejects_unknown_table(store: Store) -> None:
 
 
 def test_run_id_is_sortable_utc() -> None:
-    assert new_run_id(T0, "abcdef123456") == "20261010T120000Z-abcdef"
+    assert new_run_id(T0, "abcdef123456") == "20261010T120000000Z-abcdef"
+    later = T0.replace(microsecond=1500)
+    assert new_run_id(later, "abcdef123456") == "20261010T120000001Z-abcdef"
+    assert new_run_id(T0, "x") < new_run_id(later, "x")
 
 
 def make_client(handler: httpx.MockTransport, tmp_path: Path) -> ApiClient:

@@ -106,14 +106,15 @@
 ```sql
 -- запуск скана: для воспроизводимости
 runs(
-  run_id           VARCHAR PRIMARY KEY,   -- UTC ISO + короткий хэш
+  run_id           VARCHAR PRIMARY KEY,   -- 20261010T130023885Z-e51f3a: UTC до мс + хэш конфига
   started_at       TIMESTAMP,
   finished_at      TIMESTAMP,
   config_hash      VARCHAR,
   config_yaml      VARCHAR,               -- снимок конфига целиком
   cg_calls         INTEGER,
   binance_weight   INTEGER,
-  status           VARCHAR                -- ok | partial | failed
+  status           VARCHAR,               -- running | ok | failed
+  snapshot_run_id  VARCHAR                -- для screen: fetch-прогон, чьи данные отобраны
 )
 
 coins(

@@ -36,6 +36,7 @@ from atl_scanner.metrics.indicators import last_atr
 from atl_scanner.models import AtlSource
 from atl_scanner.normalize.binance import normalize_klines, normalize_pairs, resample_ohlcv
 from atl_scanner.normalize.coingecko import coins_frame, normalize_markets, snapshots_frame
+from atl_scanner.screen import SCREEN_COLUMNS, apply_screen
 from atl_scanner.sources.binance import BinanceSource
 from atl_scanner.sources.coingecko import CoinGeckoSource
 from atl_scanner.sources.http import ApiClient, ApiError, RateLimitBanError
@@ -95,8 +96,9 @@ class FetchSummary:
 
 
 def new_run_id(started_at: datetime, cfg_hash: str) -> str:
-    """Sortable run id: UTC start time plus config hash prefix."""
-    return f"{started_at.astimezone(UTC):%Y%m%dT%H%M%SZ}-{cfg_hash[:6]}"
+    """Sortable run id: UTC start time to the millisecond plus config hash prefix."""
+    moment = started_at.astimezone(UTC)
+    return f"{moment:%Y%m%dT%H%M%S}{moment.microsecond // 1000:03d}Z-{cfg_hash[:6]}"
 
 
 def fetch_coingecko(config: AppConfig, client: ApiClient) -> CoinGeckoFetch:
@@ -253,10 +255,15 @@ ATL_METRIC_COLUMNS = [
 METRIC_FIELDS = ["dist_pct", "dist_log", "dist_atr"]
 
 
+class NoMarketDataError(RuntimeError):
+    """Screening was requested before any fetch stored market data."""
+
+
 @dataclass(frozen=True)
 class MetricsResult:
     """atl_metrics rows (two per coin) plus one wide row per coin for screening."""
 
+    snapshot_run_id: str
     atl_metrics: pd.DataFrame
     coins: pd.DataFrame
 
@@ -268,6 +275,8 @@ def compute_metrics(config: AppConfig, store: Store, run_id: str, now: datetime)
     same units as both ATLs (USDT ~ USD assumed for the CoinGecko row).
     """
     snapshot = store.latest_snapshot()
+    if snapshot.empty:
+        raise NoMarketDataError("no market snapshot stored yet; run `atl-scanner fetch`")
     long_rows: list[dict[str, object]] = []
     wide_rows: list[dict[str, object]] = []
     for record in snapshot.to_dict("records"):
@@ -276,7 +285,8 @@ def compute_metrics(config: AppConfig, store: Store, run_id: str, now: datetime)
         long_rows.extend({"run_id": run_id, "cg_id": coin["cg_id"], **row} for row in rows)
         wide_rows.append(wide)
     atl_metrics = pd.DataFrame(long_rows, columns=ATL_METRIC_COLUMNS)
-    return MetricsResult(atl_metrics, pd.DataFrame(wide_rows))
+    snapshot_run_id = str(snapshot["snapshot_run_id"].iloc[0])
+    return MetricsResult(snapshot_run_id, atl_metrics, pd.DataFrame(wide_rows))
 
 
 def _coin_metrics(
@@ -352,3 +362,32 @@ def _int_or(value: object, default: int) -> int:
     if value is None or value is pd.NA or (isinstance(value, float) and value != value):
         return default
     return int(float(value))  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True)
+class ScreenSummary:
+    run_id: str
+    snapshot_run_id: str
+    results: pd.DataFrame
+
+
+def run_screen(config: AppConfig, store: Store, now: Now = utc_now) -> ScreenSummary:
+    """One recorded run without network: metrics + thresholds over the latest snapshot."""
+    started = now()
+    cfg_hash = config_hash(config)
+    run_id = new_run_id(started, cfg_hash)
+    store.start_run(run_id, started, cfg_hash, config_snapshot(config))
+    try:
+        metrics = compute_metrics(config, store, run_id, started)
+        results = apply_screen(metrics.coins, config).assign(run_id=run_id)
+        results["first_candle_ts"] = pd.to_datetime(results["first_candle_ts"], utc=True)
+        results = results[SCREEN_COLUMNS]
+        store.upsert_atl_metrics(metrics.atl_metrics)
+        store.upsert_screen_results(results)
+    except Exception:
+        store.finish_run(run_id, now(), "failed", cg_calls=0, binance_weight=0)
+        raise
+    store.finish_run(
+        run_id, now(), "ok", cg_calls=0, binance_weight=0, snapshot_run_id=metrics.snapshot_run_id
+    )
+    return ScreenSummary(run_id, metrics.snapshot_run_id, results)

@@ -37,7 +37,8 @@ uv run atl-scanner scan --config config.yaml       # полный прогон f
 uv run atl-scanner fetch --config config.yaml      # загрузка: CoinGecko, исключения, mapping, 1h-свечи
 uv run atl-scanner fetch --no-candles             # то же без свечей (быстро обновить mapping)
 uv run atl-scanner fetch --only coingecko         # только CoinGecko + исключения
-uv run atl-scanner screen --config config.yaml     # пересчёт метрик и фильтров по данным в БД
+uv run atl-scanner screen --config config.yaml     # метрики + фильтры по данным в БД, без сети
+uv run atl-scanner screen --top 30                 # показать больше монет, прошедших фильтры
 uv run atl-scanner dq --config config.yaml         # проверка качества данных
 ```
 
