@@ -7,9 +7,11 @@ Rules:
 - the Binance base asset must equal the CoinGecko symbol (case-insensitive), optionally
   behind a configured prefix such as 1000 (1000SATSUSDT quotes 1000 SATS);
 - the pair price, per one token, must be within mapping.max_price_deviation_log of the
-  CoinGecko price, which filters out different tokens sharing a ticker;
-- if several coins still claim one pair, the one with the closest price holds it (market
-  cap breaks ties) and all of them are marked ambiguous;
+  CoinGecko 24h range [low_24h, high_24h] (widened to include current_price), which
+  filters out different tokens sharing a ticker. A range instead of a single price
+  tolerates CoinGecko data being up to the markets cache TTL older than Binance's;
+- if several coins still claim one pair, the one closest to its range holds it (then
+  closest to the current price, then larger market cap); all are marked ambiguous;
 - mapping.overrides win over everything.
 """
 
@@ -48,20 +50,26 @@ class Coin:
     symbol: str
     price_usd: float
     market_cap_usd: float
+    low_24h: float = math.nan
+    high_24h: float = math.nan
 
 
 def map_to_binance(coins: pd.DataFrame, pairs: pd.DataFrame, config: MappingConfig) -> pd.DataFrame:
     """One row per coin with its Binance pair (or None) and mapping status.
 
-    `coins` needs cg_id, symbol, price_usd, market_cap_usd; `pairs` is normalize_pairs output.
+    `coins` needs cg_id, symbol, price_usd, market_cap_usd and optionally low_24h,
+    high_24h; `pairs` is normalize_pairs output.
     """
+    nan_column = [math.nan] * len(coins)
     coin_list = [
-        Coin(str(cg_id), str(symbol), float(price), float(cap))
-        for cg_id, symbol, price, cap in zip(
+        Coin(str(cg_id), str(symbol), float(price), float(cap), float(low), float(high))
+        for cg_id, symbol, price, cap, low, high in zip(
             coins["cg_id"].tolist(),
             coins["symbol"].tolist(),
             coins["price_usd"].tolist(),
             coins["market_cap_usd"].tolist(),
+            coins["low_24h"].tolist() if "low_24h" in coins else nan_column,
+            coins["high_24h"].tolist() if "high_24h" in coins else nan_column,
             strict=True,
         )
     ]
@@ -174,15 +182,37 @@ def _resolve_claims(
         results[coin.cg_id] = row
 
 
-def _claim_sort_key(coin: Coin, candidate: Candidate) -> tuple[float, float]:
-    """Closest price first (unknown last), then larger market cap."""
-    deviation = _price_deviation(coin, candidate)
+def _claim_sort_key(coin: Coin, candidate: Candidate) -> tuple[float, float, float]:
+    """Closest to the 24h range, then to the current price (unknown last), then cap."""
     cap = coin.market_cap_usd if math.isfinite(coin.market_cap_usd) else -math.inf
-    return (deviation if math.isfinite(deviation) else math.inf, -cap)
+    return (
+        _finite_or_inf(_price_deviation(coin, candidate)),
+        _finite_or_inf(_point_deviation(coin, candidate)),
+        -cap,
+    )
+
+
+def _finite_or_inf(value: float) -> float:
+    return value if math.isfinite(value) else math.inf
 
 
 def _price_deviation(coin: Coin, candidate: Candidate) -> float:
-    """|ln(binance price per token / coingecko price)|, NaN if either price is unusable."""
+    """Log distance from the Binance price per token to the CoinGecko 24h range.
+
+    0 inside the range; falls back to the current price when the range is missing;
+    NaN if prices are unusable.
+    """
+    bn_price = candidate.price / candidate.multiplier
+    if not (bn_price > 0 and coin.price_usd > 0):
+        return math.nan
+    bounds = [p for p in (coin.low_24h, coin.high_24h, coin.price_usd) if p > 0]
+    low, high = min(bounds), max(bounds)
+    if low <= bn_price <= high:
+        return 0.0
+    return min(abs(math.log(bn_price / low)), abs(math.log(bn_price / high)))
+
+
+def _point_deviation(coin: Coin, candidate: Candidate) -> float:
     bn_price = candidate.price / candidate.multiplier
     if not (bn_price > 0 and coin.price_usd > 0):
         return math.nan

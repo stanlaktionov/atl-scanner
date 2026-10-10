@@ -181,6 +181,13 @@ class ReportConfig(StrictModel):
     md_top_n: PositiveInt
 
 
+class DqConfig(StrictModel):
+    stale_candle_hours: PositiveInt
+    stale_price_hours: PositiveInt
+    divergence_alert_log: float = Field(le=0)
+    examples: PositiveInt
+
+
 class AppConfig(StrictModel):
     universe: UniverseConfig
     exclusions: ExclusionsConfig
@@ -191,6 +198,7 @@ class AppConfig(StrictModel):
     http: HttpConfig
     storage: StorageConfig
     report: ReportConfig
+    dq: DqConfig
 
     @model_validator(mode="after")
     def _cross_section(self) -> Self:

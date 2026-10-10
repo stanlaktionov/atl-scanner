@@ -98,3 +98,9 @@ report:
   formats: [csv, md]
   sort_by: cg_dist_log              # any screen_results column; passing coins first
   md_top_n: 50                      # rows in the Markdown table (CSV has all coins)
+
+dq:
+  stale_candle_hours: 2             # last stored 1h candle older than this => stale
+  stale_price_hours: 3              # CoinGecko last_updated older than this => stale
+  divergence_alert_log: -0.01       # ln(ATL Binance) - ln(ATL CoinGecko) below this => check
+  examples: 5                       # examples per check in the output

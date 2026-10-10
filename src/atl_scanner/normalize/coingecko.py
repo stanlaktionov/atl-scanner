@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 # raw field -> normalized column
 FLOAT_FIELDS = {
     "current_price": "price_usd",
+    "low_24h": "low_24h",
+    "high_24h": "high_24h",
     "market_cap": "market_cap_usd",
     "total_volume": "total_volume_usd",
     "ath": "ath",
@@ -27,6 +29,8 @@ MARKET_COLUMNS = [
     "symbol",
     "name",
     "price_usd",
+    "low_24h",
+    "high_24h",
     "market_cap_usd",
     "market_cap_rank",
     "total_volume_usd",

@@ -49,6 +49,8 @@ SCHEMA = [
         cg_id                 VARCHAR NOT NULL,
         snapshot_ts           TIMESTAMP NOT NULL,
         price_usd             DOUBLE,
+        low_24h               DOUBLE,
+        high_24h              DOUBLE,
         market_cap_usd        DOUBLE,
         market_cap_rank       INTEGER,
         total_volume_usd      DOUBLE,
@@ -123,6 +125,8 @@ SCHEMA = [
 
 # Columns added after a table was first created; applied to existing databases on open.
 MIGRATIONS = [
+    "ALTER TABLE market_snapshots ADD COLUMN IF NOT EXISTS low_24h DOUBLE",
+    "ALTER TABLE market_snapshots ADD COLUMN IF NOT EXISTS high_24h DOUBLE",
     "ALTER TABLE coins ADD COLUMN IF NOT EXISTS binance_price_multiplier INTEGER",
     "ALTER TABLE coins ADD COLUMN IF NOT EXISTS binance_price_dev_log DOUBLE",
     "ALTER TABLE runs ADD COLUMN IF NOT EXISTS snapshot_run_id VARCHAR",

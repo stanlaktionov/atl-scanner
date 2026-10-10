@@ -5,11 +5,12 @@ description: Check data quality of stored scanner data — missing 1h candles, z
 
 # check-data-quality
 
-Основной путь — команда (после шага 10 PLAN.md):
+Основной путь — команда (только читает БД, пороги в секции `dq` конфига):
 ```powershell
 uv run atl-scanner dq -c config.yaml
 ```
-До её появления — те же проверки SQL-запросами к `data/scanner.duckdb` (`read_only=True`).
+Пишет `data/reports/dq-<UTC>.md`. Для деталей по конкретной проверке — SQL-запросы ниже к
+`data/scanner.duckdb` (`read_only=True`) или `atl_scanner.quality.<check>(...).details`.
 
 ## Проверки
 1. **Пропуски 1h-свечей** — ожидаемое число свечей между первой и последней vs фактическое:

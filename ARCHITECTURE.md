@@ -62,12 +62,14 @@
 - Совпадение по `upper(cg.symbol) == baseAsset` либо через префикс из
   `mapping.base_prefix_multipliers` (`1000SATS` = цена за 1000 SATS → `binance_price_multiplier = 1000`).
   Прямая пара предпочитается префиксной.
-- Проверка цены: `binance_price_dev_log = |ln(цена Binance / множитель / цена CoinGecko)|`;
-  выше `mapping.max_price_deviation_log` — вероятно другой токен с тем же тикером.
+- Проверка цены: `binance_price_dev_log` — лог-расстояние от цены Binance (за один токен) до
+  24-часового диапазона CoinGecko `[low_24h, high_24h]` (внутри — 0). Диапазон, а не точка,
+  потому что данные CoinGecko могут быть старше на TTL кэша (случай BAT 2026-10-10: −15 % за
+  час). Выше `mapping.max_price_deviation_log` — вероятно другой токен с тем же тикером.
   Это проверка данных, а не порог скрининга.
 - `mapping_status`: `mapped` | `no_pair` | `price_mismatch` | `ambiguous` (несколько монет
-  проходят проверку цены — пару держит монета с ближайшей ценой, при равенстве — с большей
-  капитализацией; помечаются все) | `manual` (из `mapping.overrides`, имеют приоритет).
+  проходят проверку цены — пару держит монета, ближайшая к своему 24h-диапазону, затем к
+  текущей цене, затем с большей капитализацией; помечаются все) | `manual` (из `mapping.overrides`, имеют приоритет).
   Монеты без пары остаются в выдаче с пометкой.
 
 ### 2.3 Возраст > 1 года (`age_status`)
@@ -137,6 +139,8 @@ market_snapshots(
   cg_id                VARCHAR,
   snapshot_ts          TIMESTAMP,
   price_usd            DOUBLE,
+  low_24h              DOUBLE,
+  high_24h             DOUBLE,
   market_cap_usd       DOUBLE,
   market_cap_rank      INTEGER,
   total_volume_usd     DOUBLE,

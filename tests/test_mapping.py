@@ -149,3 +149,40 @@ def test_collision_closest_price_holds_pair_over_larger_cap() -> None:
     assert pd.isna(frame.loc["memetoon", "binance_symbol"])
     assert set(frame["mapping_status"]) == {"ambiguous"}
     assert frame.loc["memetoon", "binance_price_dev_log"] > 0.09
+
+
+def coins_with_range(*rows: tuple[str, str, float, float, float, float]) -> pd.DataFrame:
+    columns = ["cg_id", "symbol", "price_usd", "market_cap_usd", "low_24h", "high_24h"]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def test_stale_coingecko_price_within_24h_range_is_mapped() -> None:
+    # real case 2026-10-10: cached CoinGecko price 0.1524 an hour older than Binance's 0.131
+    bat = pairs(("BATUSDT", "BAT", "USDT", 0.131))
+    frame = map_to_binance(
+        coins_with_range(("basic-attention-token", "bat", 0.1524, 2e8, 0.128, 0.156)), bat, CONFIG
+    )
+    row = frame.iloc[0]
+    assert row["mapping_status"] == "mapped"
+    assert row["binance_price_dev_log"] == 0.0
+
+
+def test_deviation_is_measured_to_the_nearest_range_bound() -> None:
+    abc = pairs(("ABCUSDT", "ABC", "USDT", 2.0))
+    frame = map_to_binance(coins_with_range(("abc", "abc", 1.5, 1e8, 1.4, 1.8)), abc, CONFIG)
+    assert frame.iloc[0]["binance_price_dev_log"] == pytest.approx(math.log(2.0 / 1.8))
+    assert frame.iloc[0]["mapping_status"] == "price_mismatch"  # ln(2/1.8) = 0.105 > 0.1
+
+
+def test_collision_tie_on_range_broken_by_current_price() -> None:
+    meme = pairs(("MEMEUSDT", "MEME", "USDT", 0.000569))
+    frame = map_to_binance(
+        coins_with_range(
+            ("memetoon", "meme", 0.000517, 5.2e7, 0.0005, 0.0006),
+            ("memecoin-2", "meme", 0.000570, 3.7e7, 0.00055, 0.0006),
+        ),
+        meme,
+        CONFIG,
+    ).set_index("cg_id")
+    assert frame.loc["memecoin-2", "binance_symbol"] == "MEMEUSDT"
+    assert pd.isna(frame.loc["memetoon", "binance_symbol"])

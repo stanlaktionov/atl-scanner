@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import ExitStack
 from enum import StrEnum
 from pathlib import Path
@@ -27,6 +28,7 @@ from atl_scanner.pipeline import (
     utc_now,
     write_screen_reports,
 )
+from atl_scanner.quality import run_checks, write_markdown
 from atl_scanner.report import ATTRIBUTION
 from atl_scanner.screen import near_atl_column
 from atl_scanner.sources.binance import build_binance_client
@@ -48,7 +50,10 @@ class SourceName(StrEnum):
 
 @app.callback()
 def main(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
-    """Load .env and set up logging before any command."""
+    """Load .env, force UTF-8 output and set up logging before any command."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     load_env()
     logging.basicConfig(
         level=logging.INFO if verbose else logging.WARNING,
@@ -201,4 +206,16 @@ def _print_screen_summary(
 @app.command()
 def dq(config: Path = ConfigOpt) -> None:
     """Data quality report: candle gaps, zero volume, ATL divergence, mapping/age status."""
-    raise NotImplementedError("PLAN.md step 10")
+    cfg = _load(config)
+    if not cfg.storage.db_path.exists():
+        typer.echo("no database yet; run `atl-scanner fetch` first", err=True)
+        raise typer.Exit(code=1)
+    now = utc_now()
+    with Store(cfg.storage.db_path, read_only=True) as store:
+        results = run_checks(cfg, store, now)
+    for result in results:
+        typer.echo(f"{result.name}: {result.affected}")
+        if result.examples:
+            typer.echo(f"  e.g. {', '.join(result.examples)}")
+        typer.echo(f"  -> {result.action}")
+    typer.echo(f"report: {write_markdown(results, now, cfg.report.output_dir)}")
