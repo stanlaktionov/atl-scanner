@@ -20,9 +20,16 @@ exclusions:
   name_patterns:                    # regex safety net for unlabelled tokens
     - "(?i)^wrapped\\b"
     - "(?i)\\bbridged\\b"
+  keep_ids: []                      # never exclude these ids (reasons are still recorded);
+                                    #   e.g. spx6900 sits in CoinGecko's bridged-tokens category
 
 mapping:
   quote_assets: [USDT]              # Binance quote assets, in priority order
+  base_prefix_multipliers:          # Binance base prefix -> tokens per quoted unit
+    "1000": 1000                    #   1000SATSUSDT quotes the price of 1000 SATS
+    "1M": 1000000
+  max_price_deviation_log: 0.1      # data check: |ln(binance/coingecko price)| above this
+                                    #   => probably another token with the same ticker
   overrides: {}                     # cg_id: BINANCE_SYMBOL, or cg_id: null to force "no pair"
   # example:
   #   some-coin-id: ABCUSDT

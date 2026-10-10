@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import ExitStack
 from enum import StrEnum
 from pathlib import Path
 
@@ -16,7 +17,8 @@ from atl_scanner.config import (
     load_config,
     load_env,
 )
-from atl_scanner.pipeline import fetch_and_store_coingecko
+from atl_scanner.pipeline import FetchSummary, run_fetch
+from atl_scanner.sources.binance import build_binance_client
 from atl_scanner.sources.coingecko import UnknownCategoryError, build_coingecko_client
 from atl_scanner.sources.http import ApiError, CallBudgetExceeded
 from atl_scanner.store.db import Store
@@ -24,13 +26,12 @@ from atl_scanner.store.db import Store
 app = typer.Typer(help="Crypto ATL Scanner — research screener, not trading signals.")
 
 ConfigOpt = typer.Option(Path("config.yaml"), "--config", "-c", help="Path to config YAML.")
-OnlyOpt = typer.Option(None, "--only", help="Fetch a single source.")
+OnlyOpt = typer.Option(None, "--only", help="Skip Binance and fetch CoinGecko only.")
 ATTRIBUTION = "Data provided by CoinGecko (https://www.coingecko.com)"
 
 
 class SourceName(StrEnum):
     COINGECKO = "coingecko"
-    BINANCE = "binance"
 
 
 @app.callback()
@@ -74,37 +75,39 @@ def fetch(
     config: Path = ConfigOpt,
     only: SourceName | None = OnlyOpt,
 ) -> None:
-    """Fetch CoinGecko markets and Binance candles into raw cache and DuckDB."""
+    """Fetch CoinGecko markets, apply exclusions, map coins to Binance pairs."""
     cfg = _load(config)
-    if only in (None, SourceName.COINGECKO):
-        _fetch_coingecko(cfg)
-    if only in (None, SourceName.BINANCE):
-        typer.echo("binance: not implemented yet (PLAN.md step 6)", err=True)
-
-
-def _fetch_coingecko(cfg: AppConfig) -> None:
-    threshold = cfg.universe.min_market_cap_usd
     try:
-        with (
-            build_coingecko_client(cfg, coingecko_api_key(cfg)) as client,
-            Store(cfg.storage.db_path) as store,
-        ):
-            summary = fetch_and_store_coingecko(cfg, client, store)
+        with ExitStack() as stack:
+            cg_client = stack.enter_context(build_coingecko_client(cfg, coingecko_api_key(cfg)))
+            bn_client = None if only else stack.enter_context(build_binance_client(cfg))
+            store = stack.enter_context(Store(cfg.storage.db_path))
+            summary = run_fetch(cfg, store, cg_client, bn_client)
     except (ConfigError, ApiError, CallBudgetExceeded, UnknownCategoryError) as exc:
-        typer.echo(f"coingecko: {exc}", err=True)
+        typer.echo(f"fetch failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    _print_fetch_summary(cfg, summary)
+
+
+def _print_fetch_summary(cfg: AppConfig, summary: FetchSummary) -> None:
+    threshold = cfg.universe.min_market_cap_usd
     result = summary.coingecko
     typer.echo(f"run {summary.run_id}: {summary.coins_stored} coins stored")
     typer.echo(
         f"coingecko: {len(result.markets)} coins fetched, "
-        f"{result.count_at_least(threshold)} with market cap >= {threshold:,.0f}"
+        f"{result.count_at_least(threshold)} with market cap >= {threshold:,.0f}; "
+        f"{result.network_calls} calls (budget {cfg.sources.coingecko.max_calls_per_run}), "
+        f"{result.cache_hits} from cache"
     )
-    for category, ids in result.category_ids.items():
-        typer.echo(f"  exclusion category {category}: {len(ids)} coins")
-    budget = cfg.sources.coingecko.max_calls_per_run
-    typer.echo(
-        f"  calls: {result.network_calls} network (budget {budget}), {result.cache_hits} from cache"
-    )
+    excluded = summary.exclusions[summary.exclusions["excluded"]]
+    typer.echo(f"exclusions: {len(excluded)} coins excluded")
+    first_reasons = excluded["exclusion_reason"].str.split(";").str[0]
+    for reason, count in first_reasons.value_counts().items():
+        typer.echo(f"  {reason}: {count}")
+    if summary.mapping is not None:
+        typer.echo(f"binance: weight used {summary.binance_weight}")
+        for status, count in summary.mapping["mapping_status"].value_counts().items():
+            typer.echo(f"  {status}: {count}")
     typer.echo(ATTRIBUTION)
 
 

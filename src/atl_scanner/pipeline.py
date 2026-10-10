@@ -10,8 +10,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import pandas as pd
+
 from atl_scanner.config import AppConfig, config_hash, config_snapshot
+from atl_scanner.exclusions import classify_exclusions
+from atl_scanner.mapping import map_to_binance
+from atl_scanner.normalize.binance import normalize_pairs
 from atl_scanner.normalize.coingecko import coins_frame, normalize_markets, snapshots_frame
+from atl_scanner.sources.binance import BinanceSource
 from atl_scanner.sources.coingecko import CoinGeckoSource
 from atl_scanner.sources.http import ApiClient
 from atl_scanner.store.db import Store
@@ -46,6 +52,9 @@ class FetchSummary:
     run_id: str
     coingecko: CoinGeckoFetch
     coins_stored: int
+    exclusions: pd.DataFrame
+    mapping: pd.DataFrame | None  # None when Binance was not queried
+    binance_weight: int | None
 
 
 def new_run_id(started_at: datetime, cfg_hash: str) -> str:
@@ -69,27 +78,53 @@ def fetch_coingecko(config: AppConfig, client: ApiClient) -> CoinGeckoFetch:
 
 def ingest_coingecko(
     store: Store, fetched: CoinGeckoFetch, run_id: str, snapshot_ts: datetime
-) -> int:
-    """Normalize markets and upsert coins and this run's market snapshot."""
+) -> pd.DataFrame:
+    """Normalize markets, upsert coins and this run's market snapshot; return the markets."""
     markets = normalize_markets(fetched.markets)
     store.upsert_coins(coins_frame(markets), snapshot_ts)
     store.upsert_market_snapshots(snapshots_frame(markets, run_id, snapshot_ts))
-    return len(markets)
+    return markets
 
 
-def fetch_and_store_coingecko(
-    config: AppConfig, client: ApiClient, store: Store, now: Now = utc_now
+def fetch_binance_pairs(config: AppConfig, client: ApiClient) -> pd.DataFrame:
+    """Tradable Binance pairs in the configured quote assets, with latest prices."""
+    source = BinanceSource(client, config.sources.binance)
+    return normalize_pairs(source.list_symbols(config.mapping.quote_assets), source.fetch_prices())
+
+
+def run_fetch(
+    config: AppConfig,
+    store: Store,
+    cg_client: ApiClient,
+    bn_client: ApiClient | None = None,
+    now: Now = utc_now,
 ) -> FetchSummary:
-    """One recorded run: fetch CoinGecko, store it, mark the run ok or failed."""
+    """One recorded run: CoinGecko -> exclusions -> (Binance pairs -> mapping) -> store.
+
+    The run is marked ok or failed together with the API usage counters.
+    """
     started = now()
     cfg_hash = config_hash(config)
     run_id = new_run_id(started, cfg_hash)
     store.start_run(run_id, started, cfg_hash, config_snapshot(config))
+
+    def weight() -> int | None:
+        return bn_client.cost_used if bn_client else None
+
     try:
-        fetched = fetch_coingecko(config, client)
-        stored = ingest_coingecko(store, fetched, run_id, started)
+        fetched = fetch_coingecko(config, cg_client)
+        markets = ingest_coingecko(store, fetched, run_id, started)
+        exclusions = classify_exclusions(markets, fetched.category_ids, config.exclusions)
+        store.update_coin_columns(exclusions, started)
+        mapping = None
+        if bn_client is not None:
+            pairs = fetch_binance_pairs(config, bn_client)
+            mapping = map_to_binance(markets, pairs, config.mapping)
+            store.update_coin_columns(mapping, started)
     except Exception:
-        store.finish_run(run_id, now(), "failed", cg_calls=client.network_calls)
+        store.finish_run(
+            run_id, now(), "failed", cg_calls=cg_client.network_calls, binance_weight=weight()
+        )
         raise
-    store.finish_run(run_id, now(), "ok", cg_calls=client.network_calls)
-    return FetchSummary(run_id, fetched, stored)
+    store.finish_run(run_id, now(), "ok", cg_calls=cg_client.network_calls, binance_weight=weight())
+    return FetchSummary(run_id, fetched, len(markets), exclusions, mapping, weight())

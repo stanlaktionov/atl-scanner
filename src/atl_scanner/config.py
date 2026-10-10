@@ -64,6 +64,7 @@ class ExclusionsConfig(StrictModel):
     ids: list[str]
     symbols: list[str]
     name_patterns: list[str]
+    keep_ids: list[str]  # never excluded, e.g. originals CoinGecko files under bridged-tokens
 
     @field_validator("name_patterns")
     @classmethod
@@ -78,6 +79,11 @@ class ExclusionsConfig(StrictModel):
 
 class MappingConfig(StrictModel):
     quote_assets: list[str] = Field(min_length=1)
+    # Binance base asset prefix -> units per quoted price, e.g. 1000SATS quotes 1000 SATS.
+    base_prefix_multipliers: dict[str, PositiveInt]
+    # Data check, not a screening threshold: |ln(binance_price / coingecko_price)| above
+    # this means the pair is probably a different token with the same ticker.
+    max_price_deviation_log: PositiveFloat
     overrides: dict[str, str | None]
 
 

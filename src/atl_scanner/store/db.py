@@ -37,7 +37,9 @@ SCHEMA = [
         excluded         BOOLEAN,
         exclusion_reason VARCHAR,
         binance_symbol   VARCHAR,
+        binance_price_multiplier INTEGER,
         mapping_status   VARCHAR,
+        binance_price_dev_log    DOUBLE,
         first_seen_at    TIMESTAMP NOT NULL,
         updated_at       TIMESTAMP NOT NULL
     )""",
@@ -119,6 +121,12 @@ SCHEMA = [
     )""",
 ]
 
+# Columns added after a table was first created; applied to existing databases on open.
+MIGRATIONS = [
+    "ALTER TABLE coins ADD COLUMN IF NOT EXISTS binance_price_multiplier INTEGER",
+    "ALTER TABLE coins ADD COLUMN IF NOT EXISTS binance_price_dev_log DOUBLE",
+]
+
 TABLES = (
     "runs",
     "coins",
@@ -138,7 +146,7 @@ class Store:
         self.con = duckdb.connect(str(path), read_only=read_only)
         self.con.execute("SET TimeZone = 'UTC'")
         if not read_only:
-            for ddl in SCHEMA:
+            for ddl in [*SCHEMA, *MIGRATIONS]:
                 self.con.execute(ddl)
 
     def close(self) -> None:
@@ -195,6 +203,23 @@ class Store:
             key=["cg_id"],
             update=["symbol", "name", "updated_at"],
         )
+
+    def update_coin_columns(self, frame: pd.DataFrame, now: datetime) -> None:
+        """Set the given columns (exclusions, mapping) for existing coins by cg_id."""
+        columns = [c for c in frame.columns if c != "cg_id"]
+        if frame.empty or not columns:
+            return
+        casts = {"categories": "CAST(i.categories AS VARCHAR[])"}
+        assignments = ", ".join(f"{c} = {casts.get(c, f'i.{c}')}" for c in columns)
+        self.con.register("incoming", frame)
+        try:
+            self.con.execute(
+                f"UPDATE coins SET {assignments}, updated_at = ? "
+                "FROM incoming i WHERE coins.cg_id = i.cg_id",
+                [_naive_utc(now)],
+            )
+        finally:
+            self.con.unregister("incoming")
 
     def upsert_market_snapshots(self, snapshots: pd.DataFrame) -> None:
         columns = [c for c in snapshots.columns if c not in ("run_id", "cg_id")]

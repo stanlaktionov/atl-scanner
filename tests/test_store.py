@@ -8,11 +8,12 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pandas as pd
 import pytest
 
 from atl_scanner.config import load_config
 from atl_scanner.normalize.coingecko import coins_frame, normalize_markets, snapshots_frame
-from atl_scanner.pipeline import fetch_and_store_coingecko, new_run_id
+from atl_scanner.pipeline import new_run_id, run_fetch
 from atl_scanner.sources.cache import RawCache
 from atl_scanner.sources.http import ApiClient
 from atl_scanner.sources.ratelimit import SlidingWindowLimiter
@@ -131,8 +132,8 @@ def test_fetch_and_store_records_run(store: Store, tmp_path: Path) -> None:
             return httpx.Response(200, json=[])
         return httpx.Response(200, json=sample_rows())  # short page -> last page
 
-    summary = fetch_and_store_coingecko(
-        config, make_client(httpx.MockTransport(handler), tmp_path), store, now=lambda: T0
+    summary = run_fetch(
+        config, store, make_client(httpx.MockTransport(handler), tmp_path), now=lambda: T0
     )
     assert summary.coins_stored == 5
     run = store.query_df("SELECT * FROM runs").iloc[0]
@@ -146,7 +147,66 @@ def test_failed_run_is_recorded(store: Store, tmp_path: Path) -> None:
     config = load_config(EXAMPLE_CONFIG)
     transport = httpx.MockTransport(lambda request: httpx.Response(401, text="bad key"))
     with pytest.raises(Exception, match="401"):
-        fetch_and_store_coingecko(config, make_client(transport, tmp_path), store, now=lambda: T0)
+        run_fetch(config, store, make_client(transport, tmp_path), now=lambda: T0)
     run = store.query_df("SELECT status, cg_calls FROM runs").iloc[0]
     assert run["status"] == "failed" and run["cg_calls"] == 1
     assert store.count("coins") == 0
+
+
+def test_update_coin_columns(store: Store) -> None:
+    markets = normalize_markets(sample_rows())
+    store.upsert_coins(coins_frame(markets), T0)
+    flags = pd.DataFrame(
+        {
+            "cg_id": ["tether", "bitcoin"],
+            "categories": [["stablecoins"], []],
+            "excluded": [True, False],
+            "exclusion_reason": ["category:stablecoins", None],
+        }
+    )
+    store.update_coin_columns(flags, T0 + timedelta(hours=1))
+    row = store.query_df("SELECT * FROM coins WHERE cg_id = 'tether'").iloc[0]
+    assert list(row["categories"]) == ["stablecoins"]
+    assert row["excluded"] and row["exclusion_reason"] == "category:stablecoins"
+    assert row["updated_at"] == datetime(2026, 10, 10, 13, 0)
+    untouched = store.query_df("SELECT excluded FROM coins WHERE cg_id = 'ethereum'").iloc[0]
+    assert pd.isna(untouched["excluded"])
+
+
+def test_run_fetch_with_binance(store: Store, tmp_path: Path) -> None:
+    config = load_config(EXAMPLE_CONFIG)
+    categories = [{"category_id": c, "name": c} for c in config.exclusions.coingecko_categories]
+
+    def coingecko(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/categories/list"):
+            return httpx.Response(200, json=categories)
+        if request.url.params.get("category") == "stablecoins":
+            return httpx.Response(200, json=[{"id": "tether", "market_cap": 1e11}])
+        if "category" in request.url.params:
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=sample_rows())
+
+    btc_price = next(r["current_price"] for r in sample_rows() if r["id"] == "bitcoin")
+
+    def binance(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/exchangeInfo"):
+            symbols = [
+                {"symbol": "BTCUSDT", "baseAsset": "BTC", "quoteAsset": "USDT", "status": "TRADING"}
+            ]
+            return httpx.Response(200, json={"symbols": symbols})
+        return httpx.Response(200, json=[{"symbol": "BTCUSDT", "price": str(btc_price)}])
+
+    summary = run_fetch(
+        config,
+        store,
+        make_client(httpx.MockTransport(coingecko), tmp_path),
+        make_client(httpx.MockTransport(binance), tmp_path / "bn"),
+        now=lambda: T0,
+    )
+    coins = store.query_df("SELECT * FROM coins").set_index("cg_id")
+    assert coins.loc["tether", "excluded"]
+    assert coins.loc["bitcoin", "binance_symbol"] == "BTCUSDT"
+    assert coins.loc["bitcoin", "mapping_status"] == "mapped"
+    assert coins.loc["ethereum", "mapping_status"] == "no_pair"
+    assert summary.binance_weight == 20 + 4
+    assert store.query_df("SELECT binance_weight FROM runs").iloc[0, 0] == 24

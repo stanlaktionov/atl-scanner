@@ -50,13 +50,25 @@
    - ручные списки `ids` / `symbols` из конфига;
    - regex по имени (`name_patterns`) — страховка для неразмеченных монет.
    Исключённые монеты **сохраняются** в `coins` с флагом, а не удаляются.
+   `exclusions.keep_ids` — белый список: монета остаётся в выборке, причины всё равно пишутся
+   (нужно, т.к. категории CoinGecko неточны: напр. `spx6900` числится в `bridged-tokens`).
+3. Наблюдение (2026-10-10): основной `/coins/markets` сам не отдаёт крупные wrapped/bridged-токены
+   (WBTC, wstETH, WETH…) — они есть только в выдаче категорий. Исключения по категориям — страховка.
 
 ### 2.2 Сопоставление CoinGecko ↔ Binance (`mapping.py`)
-- `exchangeInfo` → пары со `status=TRADING` и `quoteAsset ∈ mapping.quote_assets` (по умолчанию `USDT`).
-- Совпадение по `upper(cg.symbol) == baseAsset`.
-- `mapping_status`: `mapped` | `no_pair` | `ambiguous` (несколько CG id на один символ —
-  пара достаётся монете с наибольшей капитализацией, остальные помечаются) | `manual`
-  (из `mapping.overrides`). Монеты без пары остаются в выдаче с пометкой.
+- `exchangeInfo` (вес 20, кэш 24 ч) → пары со `status=TRADING`, разрешённой спот-торговлей и
+  `quoteAsset ∈ mapping.quote_assets` (по приоритету, по умолчанию `USDT`); `ticker/price` (вес 4)
+  — текущие цены всех пар.
+- Совпадение по `upper(cg.symbol) == baseAsset` либо через префикс из
+  `mapping.base_prefix_multipliers` (`1000SATS` = цена за 1000 SATS → `binance_price_multiplier = 1000`).
+  Прямая пара предпочитается префиксной.
+- Проверка цены: `binance_price_dev_log = |ln(цена Binance / множитель / цена CoinGecko)|`;
+  выше `mapping.max_price_deviation_log` — вероятно другой токен с тем же тикером.
+  Это проверка данных, а не порог скрининга.
+- `mapping_status`: `mapped` | `no_pair` | `price_mismatch` | `ambiguous` (несколько монет
+  проходят проверку цены — пару держит монета с ближайшей ценой, при равенстве — с большей
+  капитализацией; помечаются все) | `manual` (из `mapping.overrides`, имеют приоритет).
+  Монеты без пары остаются в выдаче с пометкой.
 
 ### 2.3 Возраст > 1 года (`age_status`)
 Критерий: есть цена/свеча ≥ `universe.min_age_days` дней назад. Источники доказательства, по порядку:
@@ -112,7 +124,9 @@ coins(
   excluded         BOOLEAN,
   exclusion_reason VARCHAR,               -- category:stablecoins | manual_id | name_pattern:... | NULL
   binance_symbol   VARCHAR,               -- напр. 'ABCUSDT' или NULL
-  mapping_status   VARCHAR,               -- mapped | no_pair | ambiguous | manual
+  binance_price_multiplier INTEGER,       -- 1, 1000 (1000SATS), 1000000 (1MBABYDOGE)
+  mapping_status   VARCHAR,               -- mapped | no_pair | price_mismatch | ambiguous | manual
+  binance_price_dev_log    DOUBLE,        -- |ln(Binance/CoinGecko price)| на момент сопоставления
   first_seen_at    TIMESTAMP,
   updated_at       TIMESTAMP
 )
@@ -224,7 +238,10 @@ screen_results(
 3. **USDT ≠ USD.** Binance-цены в USDT; сравнение с USD-ценами CoinGecko предполагает
    паритет. Во время депега метрики искажаются.
 4. **Сопоставление по символу ненадёжно:** коллизии тикеров, ребрендинги, редоминации
-   (`1000XXX`, `LUNA`/`LUNC`), разные токены с одним тикером. Лечится `mapping.overrides`.
+   (`1000XXX`, `LUNA`/`LUNC`), разные токены с одним тикером. Частично ловится проверкой
+   цены и префиксами-множителями; остальное — `mapping.overrides`. Первый прогон
+   (2026-10-10): из 1000 монет 349 mapped, 645 no_pair, 4 price_mismatch, 2 ambiguous;
+   у mapped медиана отклонения цены 0.15 %, максимум 5.8 %.
 5. **Systematic bias выборки (survivorship):** `/coins/markets` возвращает только живые
    монеты; делистинговые и умершие не попадут в выборку.
 6. **Пропуски свечей** (техработы, приостановка торгов) и свечи с нулевым объёмом
