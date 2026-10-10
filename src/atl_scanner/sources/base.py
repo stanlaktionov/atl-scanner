@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
+from atl_scanner.config import Timeframe
+
 
 class MarketListSource(Protocol):
     """Provider of the coin universe with market caps and all-time ATL (e.g. CoinGecko)."""
@@ -37,7 +39,7 @@ class CandleSource(Protocol):
         ...
 
     def fetch_candles(
-        self, symbol: str, timeframe: str, start: datetime, end: datetime
+        self, symbol: str, timeframe: Timeframe, start: datetime, end: datetime
     ) -> list[list[Any]]:
         """Return raw candles in [start, end), UTC, paginating as needed."""
         ...

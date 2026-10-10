@@ -2,8 +2,9 @@
 (1h, at most 1 year back, incremental from the last stored candle). No API key.
 
 API notes (checked 2026-10): request weights exchangeInfo = 20, ticker/price for all
-symbols = 4; IP limit 6000 weight/min reported in X-MBX-USED-WEIGHT-1M. exchangeInfo for
-all symbols is ~18 MB of JSON, so it is cached for a day.
+symbols = 4, klines = 2; IP limit 6000 weight/min reported in X-MBX-USED-WEIGHT-1M.
+exchangeInfo for all symbols is ~18 MB of JSON, so it is cached for a day. A klines request
+takes ~1 s from here, so a year of 1h candles (9 pages) is fetched by parallel workers.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from atl_scanner.config import AppConfig, BinanceConfig
+from atl_scanner.config import AppConfig, BinanceConfig, Timeframe, timeframe_hours
 from atl_scanner.sources.cache import RawCache
 from atl_scanner.sources.http import ApiClient
 from atl_scanner.sources.ratelimit import SlidingWindowLimiter
@@ -22,6 +23,8 @@ EXCHANGE_INFO_ENDPOINT = "/api/v3/exchangeInfo"
 EXCHANGE_INFO_WEIGHT = 20
 TICKER_PRICE_ENDPOINT = "/api/v3/ticker/price"
 TICKER_PRICE_ALL_WEIGHT = 4
+KLINES_ENDPOINT = "/api/v3/klines"
+KLINES_WEIGHT = 2
 
 
 def build_binance_client(config: AppConfig) -> ApiClient:
@@ -64,6 +67,36 @@ class BinanceSource:
         return body
 
     def fetch_candles(
-        self, symbol: str, timeframe: str, start: datetime, end: datetime
+        self, symbol: str, timeframe: Timeframe, start: datetime, end: datetime
     ) -> list[list[Any]]:
-        raise NotImplementedError("PLAN.md step 6")
+        """Raw klines with open time in [start, end), paginated by klines_limit.
+
+        Every page is stored raw; pages are not served from cache because the request
+        windows move with every run.
+        """
+        step_ms = timeframe_hours(timeframe) * 3_600_000
+        start_ms, end_ms = _epoch_ms(start), _epoch_ms(end)
+        limit = self._config.klines_limit
+        rows: list[list[Any]] = []
+        while start_ms < end_ms:
+            params: dict[str, str | int] = {
+                "symbol": symbol,
+                "interval": timeframe,
+                "startTime": start_ms,
+                "endTime": end_ms - 1,
+                "limit": limit,
+            }
+            batch: list[list[Any]] = self._client.get_json(
+                KLINES_ENDPOINT, params, cost=KLINES_WEIGHT
+            )
+            rows.extend(batch)
+            if len(batch) < limit:
+                break
+            start_ms = int(batch[-1][0]) + step_ms
+        return rows
+
+
+def _epoch_ms(moment: datetime) -> int:
+    if moment.tzinfo is None:
+        raise ValueError("expected a timezone-aware datetime")
+    return int(moment.timestamp() * 1000)

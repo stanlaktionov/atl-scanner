@@ -1,10 +1,14 @@
 """Shared httpx client: timeouts, retries with exponential backoff, Retry-After
 handling for 429/418/5xx, integration with rate limiters and the raw disk cache.
+
+ApiClient is safe to share between worker threads (httpx.Client is thread-safe; counters
+and the call budget are guarded by a lock).
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Mapping
 from types import TracebackType
@@ -80,6 +84,7 @@ class ApiClient:
         self.network_calls = 0
         self.cache_hits = 0
         self.cost_used = 0
+        self._lock = threading.Lock()
 
     def get_json(
         self,
@@ -99,7 +104,8 @@ class ApiClient:
         if ttl_hours is not None:
             cached = self._cache.load_fresh(self.source, endpoint, key, ttl_hours)
             if cached is not None:
-                self.cache_hits += 1
+                with self._lock:
+                    self.cache_hits += 1
                 return cached.body
         response = self._request_with_retries(endpoint, query, url, cost)
         try:
@@ -155,11 +161,14 @@ class ApiClient:
         self, endpoint: str, params: Params, url: str, cost: int, *, is_last: bool
     ) -> httpx.Response | None:
         """One network attempt; None means a transport error worth retrying."""
-        if self._max_calls is not None and self.network_calls >= self._max_calls:
-            raise CallBudgetExceeded(f"{self.source}: max {self._max_calls} calls per run reached")
+        with self._lock:
+            if self._max_calls is not None and self.network_calls >= self._max_calls:
+                raise CallBudgetExceeded(
+                    f"{self.source}: max {self._max_calls} calls per run reached"
+                )
+            self.network_calls += 1
+            self.cost_used += cost
         self._limiter.acquire(cost)
-        self.network_calls += 1
-        self.cost_used += cost
         try:
             response = self._client.get(endpoint, params=params)
         except httpx.TransportError as exc:

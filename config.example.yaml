@@ -65,6 +65,7 @@ sources:
     timeframes: [1h]                # fetched
     derived_timeframes: [2h]        # resampled from 1h, not fetched
     weight_budget_per_min: 3000     # 50% of the 6000/min IP limit
+    max_workers: 6                  # parallel kline downloads (~1 s latency per request)
     cache_ttl_hours:
       exchange_info: 24
 

@@ -8,7 +8,7 @@ so tz-aware pandas columns are converted consistently on any machine.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
@@ -225,6 +225,49 @@ class Store:
         columns = [c for c in snapshots.columns if c not in ("run_id", "cg_id")]
         self._upsert("market_snapshots", snapshots, key=["run_id", "cg_id"], update=columns)
 
+    # candles ------------------------------------------------------------
+
+    def upsert_ohlcv(self, frame: pd.DataFrame) -> None:
+        values = ["open", "high", "low", "close", "volume", "quote_volume", "trades"]
+        self._upsert("ohlcv_1h", frame, key=["exchange", "symbol", "open_time"], update=values)
+
+    def last_open_times(self, exchange: str) -> dict[str, datetime]:
+        """Latest stored candle per symbol, as tz-aware UTC."""
+        rows = self.con.execute(
+            "SELECT symbol, max(open_time) FROM ohlcv_1h WHERE exchange = ? GROUP BY symbol",
+            [exchange],
+        ).fetchall()
+        return {symbol: _aware_utc(ts) for symbol, ts in rows}
+
+    def prune_ohlcv(self, exchange: str, before: datetime) -> int:
+        """Delete candles older than `before` (history is capped at one year)."""
+        cutoff = _naive_utc(before)
+        row = self.con.execute(
+            "SELECT count(*) FROM ohlcv_1h WHERE exchange = ? AND open_time < ?",
+            [exchange, cutoff],
+        ).fetchone()
+        self.con.execute(
+            "DELETE FROM ohlcv_1h WHERE exchange = ? AND open_time < ?", [exchange, cutoff]
+        )
+        return int(row[0]) if row else 0
+
+    def candle_targets(self, min_market_cap_usd: float) -> list[str]:
+        """Binance symbols of non-excluded coins above the threshold in the latest snapshot."""
+        rows = self.con.execute(
+            """
+            SELECT DISTINCT c.binance_symbol
+            FROM coins c
+            JOIN market_snapshots m USING (cg_id)
+            WHERE m.run_id = (SELECT max(run_id) FROM market_snapshots)
+              AND m.market_cap_usd >= ?
+              AND c.binance_symbol IS NOT NULL
+              AND NOT coalesce(c.excluded, false)
+            ORDER BY 1
+            """,
+            [min_market_cap_usd],
+        ).fetchall()
+        return [row[0] for row in rows]
+
     # reads --------------------------------------------------------------
 
     def query_df(self, sql: str, params: Sequence[Any] | None = None) -> pd.DataFrame:
@@ -261,3 +304,7 @@ def _naive_utc(moment: datetime) -> datetime:
     if moment.tzinfo is None:
         raise ValueError("expected a timezone-aware datetime")
     return pd.Timestamp(moment).tz_convert("UTC").tz_localize(None).to_pydatetime()
+
+
+def _aware_utc(moment: datetime) -> datetime:
+    return moment.replace(tzinfo=UTC)

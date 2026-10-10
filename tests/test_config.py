@@ -101,10 +101,19 @@ def test_invalid_values_are_rejected(
 def test_derived_timeframe_must_fit_fetched(
     example_config_dict: dict[str, Any], write_config: WriteConfig
 ) -> None:
-    example_config_dict["sources"]["binance"]["timeframes"] = ["2h"]
-    example_config_dict["sources"]["binance"]["derived_timeframes"] = ["1h"]
-    example_config_dict["metrics"]["atr_timeframe"] = "2h"
+    example_config_dict["sources"]["binance"]["timeframes"] = ["1h", "2h"]
+    example_config_dict["sources"]["binance"]["derived_timeframes"] = ["2h"]
     with pytest.raises(ConfigError, match="derived timeframe"):
+        load_config(write_config(example_config_dict))
+
+
+def test_1h_timeframe_is_required(
+    example_config_dict: dict[str, Any], write_config: WriteConfig
+) -> None:
+    example_config_dict["sources"]["binance"]["timeframes"] = ["2h"]
+    example_config_dict["sources"]["binance"]["derived_timeframes"] = []
+    example_config_dict["metrics"]["atr_timeframe"] = "2h"
+    with pytest.raises(ConfigError, match="must include 1h"):
         load_config(write_config(example_config_dict))
 
 

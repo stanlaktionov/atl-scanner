@@ -132,10 +132,13 @@ class BinanceConfig(StrictModel):
     timeframes: list[Timeframe] = Field(min_length=1)
     derived_timeframes: list[Timeframe]
     weight_budget_per_min: PositiveInt
+    max_workers: int = Field(ge=1, le=16)
     cache_ttl_hours: BinanceCacheTtl
 
     @model_validator(mode="after")
     def _derived_from_fetched(self) -> Self:
+        if "1h" not in self.timeframes:
+            raise ValueError("timeframes must include 1h (candles are stored in ohlcv_1h)")
         base_hours = min(timeframe_hours(tf) for tf in self.timeframes)
         for tf in self.derived_timeframes:
             if tf in self.timeframes or timeframe_hours(tf) % base_hours != 0:

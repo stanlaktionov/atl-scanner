@@ -2,10 +2,12 @@
 synced with the X-MBX-USED-WEIGHT-1M response header).
 
 One class covers both: a CoinGecko call costs 1, a Binance call costs its request weight.
+Thread-safe: concurrent workers share one limiter.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -38,20 +40,26 @@ class SlidingWindowLimiter:
         self._events: deque[tuple[float, int]] = deque()
         self._server_used = 0
         self._server_reset_at = 0.0
+        self._lock = threading.Lock()
 
     def acquire(self, cost: int = 1) -> None:
         """Block until `cost` units fit into the window, then record them."""
         if not 0 < cost <= self.capacity:
             raise ValueError(f"cost must be in 1..{self.capacity}, got {cost}")
-        while (wait := self._wait_time(cost)) > 0:
+        while True:
+            with self._lock:
+                wait = self._wait_time(cost)
+                if wait <= 0:
+                    self._events.append((self._clock(), cost))
+                    return
             self._sleep(wait)
-        self._events.append((self._clock(), cost))
 
     def sync_server_usage(self, used: int) -> None:
         """Record usage the server reports for its current fixed window."""
-        now = self._clock()
-        self._server_used = used
-        self._server_reset_at = (now // self.window_s + 1) * self.window_s
+        with self._lock:
+            now = self._clock()
+            self._server_used = used
+            self._server_reset_at = (now // self.window_s + 1) * self.window_s
 
     def _wait_time(self, cost: int) -> float:
         now = self._clock()

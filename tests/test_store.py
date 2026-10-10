@@ -189,6 +189,8 @@ def test_run_fetch_with_binance(store: Store, tmp_path: Path) -> None:
     btc_price = next(r["current_price"] for r in sample_rows() if r["id"] == "bitcoin")
 
     def binance(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/klines"):
+            return httpx.Response(200, json=[])
         if request.url.path.endswith("/exchangeInfo"):
             symbols = [
                 {"symbol": "BTCUSDT", "baseAsset": "BTC", "quoteAsset": "USDT", "status": "TRADING"}
@@ -208,5 +210,6 @@ def test_run_fetch_with_binance(store: Store, tmp_path: Path) -> None:
     assert coins.loc["bitcoin", "binance_symbol"] == "BTCUSDT"
     assert coins.loc["bitcoin", "mapping_status"] == "mapped"
     assert coins.loc["ethereum", "mapping_status"] == "no_pair"
-    assert summary.binance_weight == 20 + 4
-    assert store.query_df("SELECT binance_weight FROM runs").iloc[0, 0] == 24
+    assert summary.candles is not None and summary.candles.symbols_total == 1
+    assert summary.binance_weight == 20 + 4 + 2  # exchangeInfo + ticker + one klines page
+    assert store.query_df("SELECT binance_weight FROM runs").iloc[0, 0] == 26

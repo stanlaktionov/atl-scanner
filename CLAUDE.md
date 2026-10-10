@@ -34,7 +34,9 @@ uv run mypy src
 
 uv run atl-scanner check-config -c config.yaml     # проверить конфиг, показать ключевые пороги
 uv run atl-scanner scan --config config.yaml       # полный прогон fetch→report
-uv run atl-scanner fetch --config config.yaml      # только загрузка
+uv run atl-scanner fetch --config config.yaml      # загрузка: CoinGecko, исключения, mapping, 1h-свечи
+uv run atl-scanner fetch --no-candles             # то же без свечей (быстро обновить mapping)
+uv run atl-scanner fetch --only coingecko         # только CoinGecko + исключения
 uv run atl-scanner screen --config config.yaml     # пересчёт метрик и фильтров по данным в БД
 uv run atl-scanner dq --config config.yaml         # проверка качества данных
 ```

@@ -14,7 +14,8 @@ description: Run the ATL scanner (full scan or a single stage) with config param
 ## Команды
 ```powershell
 uv run atl-scanner scan   -c config.yaml   # полный прогон, сеть
-uv run atl-scanner fetch  -c config.yaml   # только загрузка (CoinGecko + Binance)
+uv run atl-scanner fetch  -c config.yaml   # загрузка: CoinGecko + mapping + 1h-свечи Binance
+                                           #   первая загрузка ~10 мин, дальше докачка хвоста
 uv run atl-scanner screen -c config.yaml   # пересчёт метрик/фильтров по БД, без сети
 ```
 Подобрать другой порог «около ATL» — отредактировать `screen.near_atl` в копии конфига
