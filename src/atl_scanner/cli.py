@@ -16,9 +16,10 @@ from atl_scanner.config import (
     load_config,
     load_env,
 )
-from atl_scanner.pipeline import fetch_coingecko
+from atl_scanner.pipeline import fetch_and_store_coingecko
 from atl_scanner.sources.coingecko import UnknownCategoryError, build_coingecko_client
 from atl_scanner.sources.http import ApiError, CallBudgetExceeded
+from atl_scanner.store.db import Store
 
 app = typer.Typer(help="Crypto ATL Scanner — research screener, not trading signals.")
 
@@ -84,11 +85,16 @@ def fetch(
 def _fetch_coingecko(cfg: AppConfig) -> None:
     threshold = cfg.universe.min_market_cap_usd
     try:
-        with build_coingecko_client(cfg, coingecko_api_key(cfg)) as client:
-            result = fetch_coingecko(cfg, client)
+        with (
+            build_coingecko_client(cfg, coingecko_api_key(cfg)) as client,
+            Store(cfg.storage.db_path) as store,
+        ):
+            summary = fetch_and_store_coingecko(cfg, client, store)
     except (ConfigError, ApiError, CallBudgetExceeded, UnknownCategoryError) as exc:
         typer.echo(f"coingecko: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    result = summary.coingecko
+    typer.echo(f"run {summary.run_id}: {summary.coins_stored} coins stored")
     typer.echo(
         f"coingecko: {len(result.markets)} coins fetched, "
         f"{result.count_at_least(threshold)} with market cap >= {threshold:,.0f}"

@@ -236,3 +236,8 @@ def config_hash(config: AppConfig) -> str:
     """Stable short hash of the effective config, stored with every run."""
     canonical = json.dumps(config.model_dump(mode="json"), sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()[:12]
+
+
+def config_snapshot(config: AppConfig) -> str:
+    """Effective config as YAML, stored with every run for reproducibility."""
+    return yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
