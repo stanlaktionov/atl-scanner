@@ -84,7 +84,7 @@ data/                    # (gitignored) raw/, scanner.duckdb, reports/
 
 ## Правила для данных
 - Не коммитить `.env`, `config.yaml`, `data/` (уже в `.gitignore`). Ключ API — только в `.env`.
-- Уважать rate limits: CoinGecko ≤ 25 вызовов/мин и `max_calls_per_run`; Binance — по весам,
+- Уважать rate limits: CoinGecko ≤ 25 вызовов/мин (лимит Demo 100/мин, но квота 10k/мес) и `max_calls_per_run`; Binance — по весам,
   читать `X-MBX-USED-WEIGHT-1M`, на 429/418 — остановиться/ждать `Retry-After`.
 - Перед сетевым запросом проверять дисковый кэш (TTL из конфига). Не гонять полные загрузки в цикле при отладке.
 - **Сырые ответы хранятся отдельно от нормализованных:** `data/raw/<source>/<endpoint>/<date>/<key>_<time>.json.gz` (gzip, ~5–8× меньше)

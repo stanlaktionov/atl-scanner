@@ -16,7 +16,9 @@ class MarketListSource(Protocol):
 
     name: str
 
-    def fetch_markets(self, min_market_cap_usd: float) -> list[dict[str, Any]]:
+    def fetch_markets(
+        self, min_market_cap_usd: float, max_coins: int | None = None
+    ) -> list[dict[str, Any]]:
         """Return raw market rows sorted by market cap, stopping below the threshold."""
         ...
 
