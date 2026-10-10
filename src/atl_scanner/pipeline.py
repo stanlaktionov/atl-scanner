@@ -10,6 +10,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -36,6 +37,7 @@ from atl_scanner.metrics.indicators import last_atr
 from atl_scanner.models import AtlSource
 from atl_scanner.normalize.binance import normalize_klines, normalize_pairs, resample_ohlcv
 from atl_scanner.normalize.coingecko import coins_frame, normalize_markets, snapshots_frame
+from atl_scanner.report import ReportContext, write_reports
 from atl_scanner.screen import SCREEN_COLUMNS, apply_screen
 from atl_scanner.sources.binance import BinanceSource
 from atl_scanner.sources.coingecko import CoinGeckoSource
@@ -391,3 +393,31 @@ def run_screen(config: AppConfig, store: Store, now: Now = utc_now) -> ScreenSum
         run_id, now(), "ok", cg_calls=0, binance_weight=0, snapshot_run_id=metrics.snapshot_run_id
     )
     return ScreenSummary(run_id, metrics.snapshot_run_id, results)
+
+
+@dataclass(frozen=True)
+class ScanSummary:
+    fetch: FetchSummary
+    screen: ScreenSummary
+    reports: list[Path]
+
+
+def run_scan(
+    config: AppConfig,
+    store: Store,
+    cg_client: ApiClient,
+    bn_client: ApiClient,
+    now: Now = utc_now,
+    progress: Progress | None = None,
+) -> ScanSummary:
+    """Full run: fetch (recorded) -> screen (recorded) -> reports."""
+    fetched = run_fetch(config, store, cg_client, bn_client, now, progress=progress)
+    screened = run_screen(config, store, now)
+    return ScanSummary(fetched, screened, write_screen_reports(config, screened, now()))
+
+
+def write_screen_reports(
+    config: AppConfig, screened: ScreenSummary, generated_at: datetime
+) -> list[Path]:
+    ctx = ReportContext(screened.run_id, screened.snapshot_run_id, generated_at, config)
+    return write_reports(screened.results, ctx)

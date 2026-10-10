@@ -96,4 +96,5 @@ storage:
 report:
   output_dir: data/reports
   formats: [csv, md]
-  sort_by: cg_dist_log              # any screen_results column
+  sort_by: cg_dist_log              # any screen_results column; passing coins first
+  md_top_n: 50                      # rows in the Markdown table (CSV has all coins)

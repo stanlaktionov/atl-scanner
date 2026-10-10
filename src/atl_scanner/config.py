@@ -178,6 +178,7 @@ class ReportConfig(StrictModel):
     output_dir: Path
     formats: list[Literal["csv", "md"]] = Field(min_length=1)
     sort_by: str
+    md_top_n: PositiveInt
 
 
 class AppConfig(StrictModel):

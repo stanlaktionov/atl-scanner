@@ -26,7 +26,9 @@ uv run atl-scanner screen -c data\config.try.yaml
 ```
 
 ## Где результат
-- Отчёт: `data/reports/<run_id>.csv` и `.md` (последний — по времени изменения).
+- Отчёт: `data/reports/<run_id>.csv` и `.md` — их пишут и `scan`, и `screen`; run_id отбора
+  печатается в конце вывода. Первая строка CSV — атрибуция-комментарий, читать так:
+  `pd.read_csv(path, comment="#")`. В CSV все монеты, в `.md` — топ `report.md_top_n`.
 - БД: `data/scanner.duckdb`, таблицы `runs`, `screen_results`, `atl_metrics`.
 ```powershell
 uv run python -c "import duckdb; c=duckdb.connect('data/scanner.duckdb', read_only=True); print(c.sql('select * from runs order by started_at desc limit 5'))"
