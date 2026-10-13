@@ -13,6 +13,7 @@ import sys
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import altair as alt
 import pandas as pd
@@ -63,25 +64,131 @@ TABLE_COLUMNS = [
     "exclusion_reason",
     "passes_all",
 ]
-COLUMN_CONFIG = {
-    "symbol": st.column_config.TextColumn("Монета"),
-    "cg_id": st.column_config.TextColumn("CoinGecko id"),
-    "binance_symbol": st.column_config.TextColumn("Пара Binance"),
-    "mapping_status": st.column_config.TextColumn("Сопоставление"),
-    "market_cap_usd": st.column_config.NumberColumn("Market cap, $", format="compact"),
-    "age_status": st.column_config.TextColumn("Возраст"),
-    "cg_dist_pct": st.column_config.NumberColumn("CG dist", format="percent"),
-    "cg_dist_log": st.column_config.NumberColumn("CG dist log", format="%.3f"),
-    "cg_dist_atr": st.column_config.NumberColumn("CG dist ATR", format="%.1f"),
-    "bn_dist_pct": st.column_config.NumberColumn("BN dist", format="percent"),
-    "bn_dist_log": st.column_config.NumberColumn("BN dist log", format="%.3f"),
-    "bn_dist_atr": st.column_config.NumberColumn("BN dist ATR", format="%.1f"),
-    "bn_is_new_low_in_window": st.column_config.CheckboxColumn("BN новый минимум"),
-    "atl_divergence_log": st.column_config.NumberColumn("Расхождение ATL", format="%.3f"),
-    "excluded": st.column_config.CheckboxColumn("Исключена"),
-    "exclusion_reason": st.column_config.TextColumn("Причина исключения"),
-    "passes_all": st.column_config.CheckboxColumn("Прошла"),
-}
+
+
+def column_config(config: AppConfig) -> dict[str, Any]:
+    """Table column labels, formats and hover hints in plain words."""
+    window = config.metrics.new_low_window_days
+    atr = f"ATR({config.metrics.atr_period}) на свечах {config.metrics.atr_timeframe}"
+    cc = st.column_config
+    return {
+        "symbol": cc.TextColumn("Монета", help="Тикер — короткое имя монеты. Может повторяться."),
+        "cg_id": cc.TextColumn("CoinGecko id", help="Точное имя монеты в CoinGecko, без повторов."),
+        "binance_symbol": cc.TextColumn(
+            "Пара Binance",
+            help="Под каким именем монета торгуется на Binance, например BLURUSDT. "
+            "Пусто — на Binance её нет.",
+        ),
+        "mapping_status": cc.TextColumn(
+            "Сопоставление",
+            help="mapped — пара найдена; no_pair — пары нет; ambiguous — подходят несколько; "
+            "price_mismatch — цена пары не совпала с CoinGecko, пара не взята.",
+        ),
+        "market_cap_usd": cc.NumberColumn(
+            "Market cap, $",
+            format="compact",
+            help="Капитализация: цена × число монет в обороте. Насколько монета «крупная».",
+        ),
+        "age_status": cc.TextColumn(
+            "Возраст",
+            help="Чем доказано, что монете больше года. unknown — доказательств нет "
+            "(это не значит, что монета молодая).",
+        ),
+        "cg_dist_pct": cc.NumberColumn(
+            "CG dist",
+            format="percent",
+            help="На сколько % цена выше исторического минимума CoinGecko. 0% — цена на минимуме.",
+        ),
+        "cg_dist_log": cc.NumberColumn(
+            "CG dist log",
+            format="%.3f",
+            help="То же расстояние в логарифмах. Для малых значений ≈ доля: 0.05 ≈ 5%.",
+        ),
+        "cg_dist_atr": cc.NumberColumn(
+            "CG dist ATR",
+            format="%.1f",
+            help=f"Сколько «обычных колебаний цены» ({atr}) до исторического минимума. "
+            "Нужны свечи Binance.",
+        ),
+        "bn_dist_pct": cc.NumberColumn(
+            "BN dist", format="percent", help="На сколько % цена выше минимума Binance за год."
+        ),
+        "bn_dist_log": cc.NumberColumn(
+            "BN dist log", format="%.3f", help="То же в логарифмах: 0.05 ≈ 5%."
+        ),
+        "bn_dist_atr": cc.NumberColumn(
+            "BN dist ATR",
+            format="%.1f",
+            help=f"Сколько «обычных колебаний цены» ({atr}) до минимума Binance за год.",
+        ),
+        "bn_is_new_low_in_window": cc.CheckboxColumn(
+            "BN новый минимум",
+            help=f"Отмечено — самая низкая цена за год была в последние {window} дн.",
+        ),
+        "atl_divergence_log": cc.NumberColumn(
+            "Расхождение ATL",
+            format="%.3f",
+            help="Насколько минимум Binance за год выше исторического минимума CoinGecko. "
+            "Обычно ≥ 0; меньше нуля — проверить монету.",
+        ),
+        "excluded": cc.CheckboxColumn(
+            "Исключена", help="Стейблкоин, обёрнутый или токенизированный актив — не в выборке."
+        ),
+        "exclusion_reason": cc.TextColumn("Причина исключения"),
+        "passes_all": cc.CheckboxColumn(
+            "Прошла", help="Монета прошла все фильтры с текущими настройками страницы."
+        ),
+    }
+
+
+def legend_markdown(config: AppConfig) -> str:
+    """Plain-language guide to the screen table, with numbers taken from the config."""
+    cap = config.universe.min_market_cap_usd
+    days = config.universe.min_age_days
+    window = config.metrics.new_low_window_days
+    period, timeframe = config.metrics.atr_period, config.metrics.atr_timeframe
+    return f"""
+**Что это за таблица.** Одна строка — одна монета. Сверху монеты, которые прошли все
+фильтры; среди них выше те, чья цена ближе всего к своему минимуму. Это материал для
+исследования, а не совет покупать или продавать.
+
+**Основные слова**
+- **ATL** (all-time low) — самая низкая цена монеты за всё время.
+- **Капитализация** (market cap) — цена × число монет в обороте, то есть «размер» монеты.
+  В выборку попадают монеты от \\${cap:,.0f} и старше {days} дн.
+- **Пара Binance** — под каким именем монета торгуется на бирже Binance, например
+  `BLURUSDT` = BLUR за доллары (USDT).
+- **Стейблкоин** — монета, привязанная к доллару или другому активу; такие исключены.
+
+**Два минимума.** Колонки с **CG** считаются от минимума CoinGecko за всю историю монеты
+на всех биржах. Колонки с **BN** — от минимума на Binance за последний год. Это разные
+числа: минимум за год обычно выше исторического.
+
+**Три способа измерить «насколько близко к минимуму»**
+- **dist** — в процентах: `5%` — цена на 5 % выше минимума, `0%` — цена на минимуме.
+- **dist log** — то же в логарифмах. Удобно сравнивать монету за \\$0.001 с монетой за \\$100.
+  При малых значениях почти равно доле: `0.05` ≈ 5 %.
+- **dist ATR** — расстояние в «обычных колебаниях цены». ATR — средний размах цены
+  за свечу; здесь ATR({period}) на свечах {timeframe}. `2` — до минимума пара обычных
+  колебаний, `50` — далеко.
+
+**Остальные колонки**
+- **BN новый минимум** — отмечено, если самая низкая цена за год была в последние {window} дн.
+- **Расхождение ATL** — насколько минимум Binance выше минимума CoinGecko. Обычно ≥ 0.
+  Если меньше нуля — возможно, на Binance другой токен с тем же тикером; проверьте монету
+  на вкладке «Монета» или «Качество данных».
+- **Возраст** — чем доказано, что монете больше года: первой свечой Binance или датами
+  CoinGecko. `unknown` — доказательств нет, а не «монета молодая».
+- **Сопоставление** — `mapped`: пара найдена; `no_pair`: монеты нет на Binance;
+  `ambiguous`: подходят несколько пар; `price_mismatch`: цена пары не совпала с CoinGecko.
+
+**Пустые ячейки** — значение посчитать нельзя. Чаще всего у монеты нет пары Binance:
+тогда пусты все колонки **BN**, «Расхождение ATL» и **CG dist ATR** (колебания цены
+считаются по свечам Binance). Включите «Только с парой Binance», чтобы видеть монеты
+со всеми колонками.
+
+Подсказка к любой колонке — при наведении на её заголовок.
+"""
 
 
 # --- setup -------------------------------------------------------------------
@@ -155,14 +262,18 @@ def action_scan(config: AppConfig) -> None:
         bar = st.progress(0.0, text="CoinGecko и сопоставление…")
 
         def progress(done: int, total: int, symbol: str) -> None:
-            bar.progress(done / max(total, 1), text=f"свечи {done}/{total} ({symbol})")
+            suffix = f" ({symbol})" if symbol else ""
+            bar.progress(done / max(total, 1), text=f"свечи {done}/{total}{suffix}")
+
+        def stage(name: str) -> None:
+            status.update(label=f"Скан: {name}…")
 
         try:
             with ExitStack() as stack:
                 cg = stack.enter_context(build_coingecko_client(config, coingecko_api_key(config)))
                 bn = stack.enter_context(build_binance_client(config))
                 store = stack.enter_context(Store(config.storage.db_path))
-                summary = run_scan(config, store, cg, bn, progress=progress)
+                summary = run_scan(config, store, cg, bn, progress=progress, stage=stage)
         except (ConfigError, ApiError, CallBudgetExceeded, UnknownCategoryError) as exc:
             status.update(label="Скан не удался", state="error")
             st.error(str(exc))
@@ -192,6 +303,8 @@ def tab_screen(config: AppConfig) -> None:
     if run_id is None:
         st.info("Отбора ещё не было: нажмите «Полный скан» или «Пересчитать отбор».")
         return
+    with st.expander("Как читать таблицу"):
+        st.markdown(legend_markdown(config))
     page_config = screen_controls(config)
     flagged = apply_screen(results.drop(columns=FLAG_COLUMNS), page_config)
     funnel(flagged)
@@ -201,7 +314,7 @@ def tab_screen(config: AppConfig) -> None:
     st.caption(f"Прогон отбора `{run_id}` · сортировка по `{column}` · {len(shown)} строк")
     st.dataframe(
         shown[TABLE_COLUMNS],
-        column_config=COLUMN_CONFIG,
+        column_config=column_config(config),
         hide_index=True,
         width="stretch",
         height=560,

@@ -51,6 +51,16 @@ def test_page_renders_tabs_and_funnel(app_config: Path) -> None:
     assert funnel["Всего"] == "3"
 
 
+def test_screen_tab_has_legend_from_config(app_config: Path) -> None:
+    at = AppTest.from_file(str(APP), default_timeout=60).run()
+    legend = by_label(at.expander, "Как читать таблицу")
+    text = "\n".join(m.value for m in legend.markdown)
+    config = load_config(app_config)
+    assert f"последние {config.metrics.new_low_window_days} дн." in text
+    assert f"ATR({config.metrics.atr_period})" in text
+    assert "\\$" in text  # dollar signs escaped, not rendered as LaTeX
+
+
 def test_threshold_controls_filter_in_memory(app_config: Path) -> None:
     at = AppTest.from_file(str(APP), default_timeout=60).run()
 
