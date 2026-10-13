@@ -276,6 +276,19 @@ def test_failed_symbol_is_collected(store_with_targets: Any, tmp_path: Path) -> 
     assert result.symbols_updated == 1 and result.candles_stored == 24
 
 
+def test_progress_starts_at_zero_and_counts_failures(
+    store_with_targets: Any, tmp_path: Path
+) -> None:
+    config = make_config(history_days=1)
+    server = FakeKlines({"ABCUSDT": datetime(2020, 1, 1, tzinfo=UTC)}, fail={"NEWUSDT": 400})
+    calls: list[tuple[int, int, str]] = []
+    client = make_client(server, tmp_path, config)
+    fetch_candles(config, client, store_with_targets, NOW, lambda *call: calls.append(call))
+    assert calls[0] == (0, 2, "")
+    assert [done for done, _, _ in calls] == [0, 1, 2]
+    assert {symbol for _, _, symbol in calls[1:]} == {"ABCUSDT", "NEWUSDT"}
+
+
 def test_ban_aborts(store_with_targets: Any, tmp_path: Path) -> None:
     config = make_config(history_days=1)
     server = FakeKlines({}, fail={"ABCUSDT": 418, "NEWUSDT": 418})

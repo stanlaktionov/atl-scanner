@@ -188,6 +188,11 @@ class DqConfig(StrictModel):
     examples: PositiveInt
 
 
+class ConsoleConfig(StrictModel):
+    # Seconds between status lines of `scan` / `fetch` in the terminal.
+    progress_interval_s: PositiveFloat
+
+
 class AppConfig(StrictModel):
     universe: UniverseConfig
     exclusions: ExclusionsConfig
@@ -199,6 +204,8 @@ class AppConfig(StrictModel):
     storage: StorageConfig
     report: ReportConfig
     dq: DqConfig
+    # Optional so configs copied before this section existed keep loading.
+    console: ConsoleConfig = ConsoleConfig(progress_interval_s=30)
 
     @model_validator(mode="after")
     def _cross_section(self) -> Self:

@@ -20,6 +20,7 @@ from atl_scanner.config import (
     load_config,
     load_env,
 )
+from atl_scanner.console import ConsoleProgress
 from atl_scanner.pipeline import (
     FetchSummary,
     NoMarketDataError,
@@ -94,7 +95,10 @@ def scan(config: Path = ConfigOpt, top: int = TopOpt) -> None:
             cg_client = stack.enter_context(build_coingecko_client(cfg, coingecko_api_key(cfg)))
             bn_client = stack.enter_context(build_binance_client(cfg))
             store = stack.enter_context(Store(cfg.storage.db_path))
-            summary = run_scan(cfg, store, cg_client, bn_client, progress=_progress)
+            console = stack.enter_context(_console(cfg))
+            summary = run_scan(
+                cfg, store, cg_client, bn_client, progress=console.candles, stage=console.stage
+            )
     except (
         ConfigError,
         ApiError,
@@ -121,8 +125,15 @@ def fetch(
             cg_client = stack.enter_context(build_coingecko_client(cfg, coingecko_api_key(cfg)))
             bn_client = None if only else stack.enter_context(build_binance_client(cfg))
             store = stack.enter_context(Store(cfg.storage.db_path))
+            console = stack.enter_context(_console(cfg))
             summary = run_fetch(
-                cfg, store, cg_client, bn_client, with_candles=not no_candles, progress=_progress
+                cfg,
+                store,
+                cg_client,
+                bn_client,
+                with_candles=not no_candles,
+                progress=console.candles,
+                stage=console.stage,
             )
     except (ConfigError, ApiError, CallBudgetExceeded, UnknownCategoryError) as exc:
         typer.echo(f"fetch failed: {exc}", err=True)
@@ -130,9 +141,10 @@ def fetch(
     _print_fetch_summary(cfg, summary)
 
 
-def _progress(done: int, total: int, symbol: str) -> None:
-    if done == total or done % 25 == 0:
-        typer.echo(f"  candles {done}/{total} ({symbol})", err=True)
+def _console(cfg: AppConfig) -> ConsoleProgress:
+    return ConsoleProgress(
+        cfg.console.progress_interval_s, lambda line: typer.echo(f"  {line}", err=True)
+    )
 
 
 def _print_fetch_summary(

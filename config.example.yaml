@@ -104,3 +104,6 @@ dq:
   stale_price_hours: 3              # CoinGecko last_updated older than this => stale
   divergence_alert_log: -0.01       # ln(ATL Binance) - ln(ATL CoinGecko) below this => check
   examples: 5                       # examples per check in the output
+
+console:
+  progress_interval_s: 30           # scan/fetch print a status line this often, to see the run is alive

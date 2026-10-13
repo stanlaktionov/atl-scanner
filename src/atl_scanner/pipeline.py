@@ -47,7 +47,8 @@ from atl_scanner.store.db import Store
 logger = logging.getLogger(__name__)
 
 Now = Callable[[], datetime]
-Progress = Callable[[int, int, str], None]
+Progress = Callable[[int, int, str], None]  # (done, total, symbol); done == 0 at the start
+Stage = Callable[[str], None]  # called with a short name when a run step begins
 CANDLE_EXCHANGE = "binance"
 CANDLE_TIMEFRAME: Timeframe = "1h"
 HOUR = timedelta(hours=1)
@@ -164,6 +165,8 @@ def fetch_candles(
     source = BinanceSource(client, bn)
     stored, done = 0, 0
     failures: dict[str, str] = {}
+    if progress is not None:
+        progress(0, len(jobs), "")
     pool = ThreadPoolExecutor(max_workers=bn.max_workers)
     try:
         futures: dict[Future[list[list[Any]]], str] = {
@@ -180,10 +183,10 @@ def fetch_candles(
             except ApiError as exc:
                 logger.warning("candles for %s failed: %s", symbol, exc)
                 failures[symbol] = str(exc)
-                continue
-            frame = normalize_klines(raw, CANDLE_EXCHANGE, symbol, now)
-            store.upsert_ohlcv(frame)
-            stored += len(frame)
+            else:
+                frame = normalize_klines(raw, CANDLE_EXCHANGE, symbol, now)
+                store.upsert_ohlcv(frame)
+                stored += len(frame)
             if progress is not None:
                 progress(done, len(jobs), symbol)
     finally:
@@ -201,6 +204,7 @@ def run_fetch(
     *,
     with_candles: bool = True,
     progress: Progress | None = None,
+    stage: Stage | None = None,
 ) -> FetchSummary:
     """One recorded run: CoinGecko -> exclusions -> Binance pairs -> mapping -> candles.
 
@@ -217,16 +221,19 @@ def run_fetch(
         return bn_client.cost_used if bn_client else None
 
     try:
+        _notify(stage, "coingecko: markets and exclusion categories")
         fetched = fetch_coingecko(config, cg_client)
         markets = ingest_coingecko(store, fetched, run_id, started)
         exclusions = classify_exclusions(markets, fetched.category_ids, config.exclusions)
         store.update_coin_columns(exclusions, started)
         mapping, candles = None, None
         if bn_client is not None:
+            _notify(stage, "binance: pairs and mapping")
             pairs = fetch_binance_pairs(config, bn_client)
             mapping = map_to_binance(markets, pairs, config.mapping)
             store.update_coin_columns(mapping, started)
             if with_candles:
+                _notify(stage, "binance: 1h candles")
                 candles = fetch_candles(config, bn_client, store, started, progress)
     except Exception:
         store.finish_run(
@@ -235,6 +242,11 @@ def run_fetch(
         raise
     store.finish_run(run_id, now(), "ok", cg_calls=cg_client.network_calls, binance_weight=weight())
     return FetchSummary(run_id, fetched, len(markets), exclusions, mapping, candles, weight())
+
+
+def _notify(stage: Stage | None, name: str) -> None:
+    if stage is not None:
+        stage(name)
 
 
 ATL_METRIC_COLUMNS = [
@@ -410,10 +422,13 @@ def run_scan(
     bn_client: ApiClient,
     now: Now = utc_now,
     progress: Progress | None = None,
+    stage: Stage | None = None,
 ) -> ScanSummary:
     """Full run: fetch (recorded) -> screen (recorded) -> reports."""
-    fetched = run_fetch(config, store, cg_client, bn_client, now, progress=progress)
+    fetched = run_fetch(config, store, cg_client, bn_client, now, progress=progress, stage=stage)
+    _notify(stage, "metrics and screen")
     screened = run_screen(config, store, now)
+    _notify(stage, "reports")
     return ScanSummary(fetched, screened, write_screen_reports(config, screened, now()))
 
 

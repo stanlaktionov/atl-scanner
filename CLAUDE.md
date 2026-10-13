@@ -68,6 +68,7 @@ src/atl_scanner/
   screen.py              # применение порогов конфига → screen_results
   report.py              # CSV/Markdown + атрибуция CoinGecko
   quality.py             # проверки качества данных
+  console.py             # прогресс scan/fetch в терминале: этапы + строка статуса раз в N секунд
   app.py                 # Streamlit UI (extra `ui`); только вызывает pipeline, без своей логики
 tests/                   # pytest; fixtures/ — записанные сырые ответы API
 data/                    # (gitignored) raw/, scanner.duckdb, reports/
